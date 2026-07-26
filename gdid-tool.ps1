@@ -361,25 +361,8 @@ function Install-RotationTask($cfg) {
         Write-Host "  [SEC] Consider moving to a protected directory (C:\Program Files\GDID)" -ForegroundColor Yellow
     }
 }
-function Install-IPRefreshTask {
-    $taskName = "GDIDFirewallRefresh"
-    $scriptPath = Join-Path $PSScriptRoot 'gdid-tool.ps1'
-    $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" refreshfw"
-    $trigger = New-ScheduledTaskTrigger -Daily -At "02:00"
-    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
-    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest
-    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
-    Write-Host "  [OK] Scheduled task '$taskName' created (daily IP refresh)" -ForegroundColor Green
-}
-
 function Uninstall-RotationTask {
     $taskName = "GDIDRotator"
-    Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
-    Write-Host "  [OK] Scheduled task '$taskName' removed" -ForegroundColor Green
-}
-
-function Uninstall-IPRefreshTask {
-    $taskName = "GDIDFirewallRefresh"
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
     Write-Host "  [OK] Scheduled task '$taskName' removed" -ForegroundColor Green
 }
@@ -541,11 +524,8 @@ function Show-Status {
 
     Write-Host "`n-- Scheduled Tasks --" -ForegroundColor Cyan
     $rotatorTask = Get-ScheduledTask -TaskName "GDIDRotator" -ErrorAction SilentlyContinue
-    $ipTask = Get-ScheduledTask -TaskName "GDIDFirewallRefresh" -ErrorAction SilentlyContinue
     if ($rotatorTask) { Write-Host "  GDIDRotator: $($rotatorTask.State)" -ForegroundColor Green }
     else { Write-Host "  GDIDRotator: None" -ForegroundColor DarkGray }
-    if ($ipTask) { Write-Host "  GDIDFirewallRefresh: $($ipTask.State)" -ForegroundColor Green }
-    else { Write-Host "  GDIDFirewallRefresh: None" -ForegroundColor DarkGray }
 
     Write-Host "`n-- Feature Kills --" -ForegroundColor Cyan
     $checks = @(
@@ -655,10 +635,6 @@ function Install-All {
 
     Install-RotationTask $cfg
 
-    if ($cfg.blockDDS -or $cfg.blockActivity) {
-        Install-IPRefreshTask
-    }
-
     Write-Host "`n===== Install Complete =====`n" -ForegroundColor Green
     Write-Host "Run '.\\gdid-tool.ps1 status' to verify." -ForegroundColor White
     Write-Host "Run '.\\gdid-tool.ps1 config' to adjust settings." -ForegroundColor White
@@ -668,7 +644,6 @@ function Uninstall-All {
     Write-Host "`n===== Uninstalling GDID Privacy =====" -ForegroundColor Cyan
 
     Uninstall-RotationTask
-    Uninstall-IPRefreshTask
     Uninstall-FeatureKills
 
     Write-Host "  [OK] Restoring CDP service defaults..." -ForegroundColor Yellow

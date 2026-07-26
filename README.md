@@ -154,7 +154,7 @@ Two ways to get `gdid-tool.exe`:
 > ⚠️ **Antivirus note:** `ps2exe` wrappers are sometimes flagged by AV because the same technique is abused by malware. The binary is safe and fully open-source (you can read `gdid-tool.ps1` yourself), but you may need to allow-list it. An unsigned `.exe` is more likely to be flagged than the `.ps1`.
 
 ### 3. Runs automatically when your PC starts
-`install` already sets this up for you — it creates a Windows **scheduled task** called **`GDIDRotator`** that fires **AtStartup** (and on the rotation timer). Verify it:
+`install` creates a Windows **scheduled task** called **`GDIDRotator`** that fires **AtStartup** (and on the rotation timer). Verify it:
 ```powershell
 .\gdid-tool.ps1 status        # "Scheduled Task: GDIDRotator: Ready"
 Get-ScheduledTask -TaskName "GDIDRotator"
