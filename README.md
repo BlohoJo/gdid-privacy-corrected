@@ -24,7 +24,7 @@
 
 The **GDID (Global Device Identifier)** is a persistent 64-bit device ID that Microsoft assigns to every Windows installation. It's used across the Connected Devices Platform, Delivery Optimization, and Microsoft telemetry to track devices — even **without** a Microsoft Account login.
 
-This tool gives you **control** over that identifier on **your own machine**.
+This tool **disables the tracking vector** on your own machine: CDP services are turned off and the tracking endpoints are blocked via the HOSTS file. Both are ON by default. No IP-based firewall tricks that break against 4-second TTLs — just the two things that actually work.
 
 <div align="center">
   <br/>
@@ -117,11 +117,11 @@ Then run (as Administrator):
 > This launches the script directly through PowerShell, bypassing both the file-association dialog and the execution-policy block.
 
 That's it. The tool will:
-1. Read your current GDID
+1. Read your current GDID and back it up
 2. Generate and write a fake one
 3. Clear local CDP state
-4. Restart CDP services
-5. Add firewall rules to block the tracking endpoints
+4. Disable CDP services (prevents reversion to the real GDID)
+5. Add HOSTS file blocks for the tracking endpoints
 6. Create a scheduled task for automatic rotation
 
 ### Verify
@@ -174,7 +174,7 @@ Alternative (manual) startup method — the **Startup folder**:
 
 | Command | Description |
 |---------|-------------|
-| `status` | Show current GDID, service state, firewall rules, feature kills |
+| `status` | Show current GDID, service state, HOSTS blocks, feature kills |
 | `rotate` | Immediately generate and apply a new fake GDID |
 | `install` | Apply all protections per current config |
 | `uninstall` | Remove all changes, restore defaults |
@@ -196,12 +196,11 @@ Edit `gdid-config.json` or use `.\gdid-tool.ps1 config <key> <value>`:
 | `rotationMode` | `perBoot` / `timed` / `onDemand` | `perBoot` | When to auto-rotate the GDID |
 | `timedIntervalMin` | number | `30` | Minutes between rotations (timed mode) |
 
-### Network Blocking
+### Blocking
 
 | Key | Default | What it blocks |
 |-----|---------|----------------|
-| `blockDDS` | `true` | `aad.cs.dds.microsoft.com` |
-| `blockActivity` | `true` | `activity.windows.com` |
+| `blockHosts` | `true` | `aad.cs.dds.microsoft.com`, `activity.windows.com` via HOSTS file |
 
 ### Feature Kill Switches
 
@@ -214,7 +213,6 @@ Toggle these to disable specific Microsoft services that use or depend on the GD
 | `killStore` | `false` | Microsoft Store auto-updates |
 | `killTimeline` | `false` | Activity History / Timeline |
 | `blockCDP` | `true` | CDPSvc / CDPUserSvc entirely |
-| `blockHosts` | `true` | HOSTS file blocking (name-based, immune to IP churn) |
 
 ### Advanced
 
@@ -243,8 +241,8 @@ Toggle these to disable specific Microsoft services that use or depend on the GD
 
 | Feature | Collateral Damage |
 |---------|-------------------|
-| `blockDDS` | Cross-device clipboard, "Continue on PC", Nearby Share |
-| `blockCDP` | All of the above + any CDP-dependent apps |
+| `blockCDP` | Nearby Share, cross-device clipboard, "Continue on PC", any CDP-dependent apps |
+| `blockHosts` | None — name-based HOSTS blocking is targeted and has no side effects |
 | `killPhoneLink` | Your Phone / Phone Link app stops working |
 | `killOneDrive` | OneDrive won't sync files |
 | `killStore` | App updates require manual trigger in Settings |
@@ -258,10 +256,10 @@ Toggle these to disable specific Microsoft services that use or depend on the GD
 2. **Back up** the original GDID on first run (stored in `gdid-config.json`)
 3. **Write** to both registry locations (`ExtendedProperties\LID` + `Token\{GUID}\DeviceId`)
 4. **Clear** `%LOCALAPPDATA%\ConnectedDevicesPlatform` (stale CDP state cache)
-5. **Disable CDP services** (the default) — the spoofed value persists across reboots and the real GDID is never reported
-6. **Block** endpoints via Windows Firewall (IP-based) and/or HOSTS file (name-based)
+5. **Disable CDP services** (the default) — prevents CDPSvc from restoring the real GDID from its DPAPI DeviceTicket. The spoofed value persists across reboots.
+6. **Block** the tracking endpoints via the HOSTS file (also ON by default)
 
-> **CDP disable is ON by default.** This is the strongest protection. If you need Nearby Share, cross-device clipboard, or "Continue on PC", set `blockCDP=false` — but be aware that without it, CDPSvc reloads the real GDID from its DPAPI DeviceTicket on restart, making rotation local-only and self-reverting.
+> Both `blockCDP` and `blockHosts` are ON by default — maximum protection out of the box. If you need Nearby Share or cross-device clipboard, set `blockCDP=false` and keep `blockHosts=true` for reliable name-based blocking.
 
 ---
 
@@ -271,17 +269,14 @@ Toggle these to disable specific Microsoft services that use or depend on the GD
 # Check current GDID value
 (Get-ItemProperty 'HKCU:\SOFTWARE\Microsoft\IdentityCRL\ExtendedProperties').LID
 
-# Check firewall rules
-Get-NetFirewallRule | Where-Object DisplayName -like "*GDID*"
-
-# Check scheduled task
-Get-ScheduledTask -TaskName "GDIDRotator"
-
 # Check CDP state cache
 Get-ChildItem "$env:LOCALAPPDATA\ConnectedDevicesPlatform"
 
 # Check service status
 Get-Service CDPSvc, CDPUserSvc | Format-Table Name, Status, StartType -AutoSize
+
+# Check HOSTS file
+gc C:\Windows\System32\drivers\etc\hosts | Select-String "GDID"
 ```
 
 ---
@@ -305,27 +300,25 @@ msbuild gdid-hook.vcxproj /p:Configuration=Release /p:Platform=x64
 
 ## 🧠 Known Limitations
 
-### IP-based firewall blocking
-These endpoints use **Azure Front Door** shared frontends with DNS TTLs as low as **4 seconds**. A firewall rule created at one moment may not match the IP address CDP connects to moments later. IP-based blocking provides a partial defense at best; it is structurally unreliable.
-
-**The solution:** `blockHosts=true` (ON by default) uses name-based HOSTS file blocking that is immune to IP rotation. `blockCDP=true` (also ON by default) eliminates the tracking vector entirely.
+### HOSTS file blocking
+The HOSTS file maps `aad.cs.dds.microsoft.com` and `activity.windows.com` to `0.0.0.0`. This is name-based and immune to the IP address rotation that breaks firewall approaches. No scheduled refresh needed.
 
 ### CDP services are disabled by default
-When `blockCDP=true` (the default), CDPSvc and CDPUserSvc are set to Disabled. This means Nearby Share, cross-device clipboard, and "Continue on PC" will not work. If you need these features:
+`blockCDP=true` (the default) disables CDPSvc and CDPUserSvc. This means Nearby Share, cross-device clipboard, and "Continue on PC" will not work. If you need these features:
 ```powershell
 .\gdid-tool.ps1 config blockCDP false
 .\gdid-tool.ps1 install
 ```
-Without CDP disable, rotation is local-only — CDPSvc restores the real GDID from its DeviceTicket on restart.
+Without CDP disable, rotation becomes local-only — CDPSvc restores the real GDID from its DeviceTicket on restart. Keep `blockHosts=true` for reliable blocking in that case.
 
-### Domain list maintenance
-Several domains originally shipped were verified as `NXDOMAIN` (non-existent) as of July 2026. The current lists only include domains confirmed to resolve. Domain availability changes over time — report new findings via GitHub issues.
+### Why there's no IP-based firewall
+These endpoints use Azure Front Door shared frontends with DNS TTLs as low as **4 seconds**. A firewall rule created at one moment is stale before CDP ever connects. This approach is structurally broken and was removed — the two things that actually work (CDP disable + HOSTS blocking) are both ON by default.
 
 ### Windows Updates
 After a major Windows update, re-run `.\\gdid-tool.ps1 install` to re-apply protections. This tool does not survive a clean Windows reinstall.
 
 ### Scheduled task security
-Scheduled tasks run with `RunLevel Highest` from the script's install path. Keep the script in a directory writable only by administrators (e.g. `C:\\Program Files\\GDID`). The tool warns on install if it detects a user-writable path.
+The rotation task runs with `RunLevel Highest` from the script's install path. Keep the script in a directory writable only by administrators (e.g. `C:\\Program Files\\GDID`). The tool warns on install if it detects a user-writable path.
 
 ---
 
