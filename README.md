@@ -200,8 +200,8 @@ Edit `gdid-config.json` or use `.\gdid-tool.ps1 config <key> <value>`:
 
 | Key | Default | What it blocks |
 |-----|---------|----------------|
-| `blockDDS` | `true` | `dds.microsoft.com`, `fd.dds.microsoft.com`, `aad.cs.dds.microsoft.com`, `cdpcs.access.microsoft.com` |
-| `blockActivity` | `true` | `activity.windows.com`, `cdn.activity.windows.com` |
+| `blockDDS` | `true` | `aad.cs.dds.microsoft.com` |
+| `blockActivity` | `true` | `activity.windows.com` |
 
 ### Feature Kill Switches
 
@@ -254,12 +254,13 @@ Toggle these to disable specific Microsoft services that use or depend on the GD
 ## 🔄 How Rotation Works
 
 1. **Generate** a random 64-bit hex string with the `0018` prefix (valid Device PUID namespace)
-2. **Write** to both registry locations (`ExtendedProperties\LID` + `Token\{GUID}\DeviceId`)
-3. **Clear** `%LOCALAPPDATA%\ConnectedDevicesPlatform` (stale CDP state cache)
-4. **Restart** CDP services (forces re-registration with DDS using the fake ID)
-5. **Block** re-provisioning endpoints via Windows Firewall
+2. **Back up** the original GDID on first run (stored in `gdid-config.json`)
+3. **Write** to both registry locations (`ExtendedProperties\LID` + `Token\{GUID}\DeviceId`)
+4. **Clear** `%LOCALAPPDATA%\ConnectedDevicesPlatform` (stale CDP state cache)
+5. **Restart** CDP services — **important:** this causes CDPSvc to reload the real GDID from its DPAPI-wrapped DeviceTicket and restore it. When `blockCDP=false` (default), the spoof is local-only and self-reverts.
+6. **Block** endpoints via Windows Firewall (IP-based) and/or HOSTS file (name-based)
 
-The server sees whatever fake ID the tool wrote — the change is local and propagates upward into the Device Directory Service.
+> **With `blockCDP=true`:** CDP services stay disabled, the spoofed value persists across reboots, and no GDID is ever reported. This is the strongest protection but disables all CDP-dependent features (Nearby Share, cross-device clipboard, "Continue on PC").
 
 ---
 
@@ -301,11 +302,26 @@ msbuild gdid-hook.vcxproj /p:Configuration=Release /p:Platform=x64
 
 ---
 
-## 🧠 Caveats
+## 🧠 Known Limitations
 
-- **GDID is server-assigned.** Rotation changes the local value, but the server assigned the original. The firewall prevents the server from re-registering the real ID or rejecting the fake one.
-- **CDP has an anonymous path — signing out of MSA does *not* make you private.** Many people assume "I never signed into a Microsoft Account, so Microsoft can't track my device." That's wrong: the Connected Devices Platform (CDP) still generates a stable **anonymous device identity** for local features like Nearby Share and "Continue on PC". That anonymous ID is reported to the same backend endpoints (`dds.microsoft.com`, etc.) as the full GDID. This tool's firewall rules block those endpoints **regardless of whether you're signed in**, so both the MSA-linked ID and the anonymous path are cut off.
-- **Windows Updates may reset policies.** After a major Windows update, re-run `.\gdid-tool.ps1 install` to re-apply.
+### IP-based firewall blocking
+These endpoints use **Azure Front Door** shared frontends with DNS TTLs as low as **4 seconds**. A firewall rule created at one moment may not match the IP address CDP connects to moments later. IP-based blocking provides a partial defense; it is not a reliable block.
+
+**Recommendation:** Use `blockHosts=true` for name-based HOSTS file blocking (immune to IP rotation) or `blockCDP=true` to disable the tracking vector entirely.
+
+### GDID rotation is local-only (without blockCDP)
+When `blockCDP=false` (the default), CDPSvc holds the real GDID in a DPAPI-wrapped **DeviceTicket**. Restarting CDPSvc reloads the real value and overwrites the spoofed registry entry. The spoof is visible only to local readers while CDP services are stopped. Microsoft still sees the real PUID on any `wlidsvc` contact (Store, activation, WNS).
+
+**Recommendation:** Set `blockCDP=true` if you want persistent rotation without reversion.
+
+### Domain list maintenance
+Several domains originally shipped were verified as `NXDOMAIN` (non-existent) as of July 2026. The current lists only include domains confirmed to resolve. Domain availability changes over time — report new findings via GitHub issues.
+
+### Windows Updates
+After a major Windows update, re-run `.\\gdid-tool.ps1 install` to re-apply protections. This tool does not survive a clean Windows reinstall.
+
+### Scheduled task security
+Scheduled tasks run with `RunLevel Highest` from the script's install path. Keep the script in a directory writable only by administrators (e.g. `C:\\Program Files\\GDID`). The tool warns on install if it detects a user-writable path.
 
 ---
 

@@ -50,7 +50,7 @@ $DefaultConfig = @{
     timedIntervalMin  = 30
     blockDDS          = $true
     blockActivity     = $true
-    blockCDP          = $false
+    blockCDP          = $false      # OFF by default: disables CDPSvc/CDPUserSvc entirely
     killPhoneLink     = $false
     killOneDrive      = $false
     killStore         = $false
@@ -59,6 +59,7 @@ $DefaultConfig = @{
     blockHosts        = $false      # Block via HOSTS file in addition to firewall
     hookMethod        = 'registry'   # registry | api | none
     lastRotation      = $null
+    originalGDID      = $null
 }
 
 function Get-Config {
@@ -83,27 +84,28 @@ $RegPaths = @(
     'HKCU:\SOFTWARE\Microsoft\IdentityCRL\Immersive\production\Token'
 )
 
+# NOTE: Several domains previously shipped were verified as NXDOMAIN (non-existent)
+# as of July 2026. Only domains confirmed to resolve are included. IP-based blocking
+# is inherently limited due to short TTLs (4-120s) on these Azure Front Door endpoints.
+# HOSTS-based blocking is more reliable for name-level blocking.
 $DDSDomains = @(
-    'dds.microsoft.com',
-    'fd.dds.microsoft.com',
-    'aad.cs.dds.microsoft.com',
-    'cdpcs.access.microsoft.com',
-    'geo.prod.do.dsp.mp.microsoft.com'
+    'aad.cs.dds.microsoft.com'
 )
 
 $ActivityDomains = @(
-    'activity.windows.com',
-    'cdn.activity.windows.com'
+    'activity.windows.com'
+)
+
+# geo.prod.do.dsp.mp.microsoft.com is Delivery Optimization (DoSvc), not GDID.
+# Blocking it costs update bandwidth without affecting device identification.
+# Include only if explicitly desired via config.
+$DODomains = @(
+    'geo.prod.do.dsp.mp.microsoft.com'
 )
 
 $HostsDomains = @(
-    'dds.microsoft.com',
-    'fd.dds.microsoft.com',
     'aad.cs.dds.microsoft.com',
-    'cdpcs.access.microsoft.com',
-    'geo.prod.do.dsp.mp.microsoft.com',
-    'activity.windows.com',
-    'cdn.activity.windows.com'
+    'activity.windows.com'
 )
 
 $CDPStateDir = "$env:LOCALAPPDATA\ConnectedDevicesPlatform"
@@ -189,46 +191,71 @@ function Restart-CDP {
 }
 
 # ---------- IP-based Firewall ----------
-# Windows Firewall cannot block by domain name. Instead, resolve each domain
-# to its current IP addresses and block those. IPs are refreshed daily via
-# scheduled task since DNS records can change.
+# NOTE: IP-based firewall blocking has inherent limitations documented in
+# README.md#known-limitations. These endpoints use Azure Front Door shared
+# frontends with TTLs as low as 4 seconds. IP rules built at one moment may
+# not match the address CDP connects to moments later. HOSTS blocking
+# ($cfg.blockHosts) is immune to address rotation. Disabling CDP services
+# ($cfg.blockCDP) eliminates the tracking vector entirely.
 function Install-FirewallRules {
     param(
         [string]$Group,
         [string[]]$Domains
     )
-    $ips = [System.Collections.ArrayList]@()
+
+    $ips = [System.Collections.Generic.List[string]]::new()
+
     foreach ($domain in $Domains) {
         try {
-            $resolved = [System.Net.Dns]::GetHostAddresses($domain) |
+            # @(...) forces array even for single-IP results,
+            # preventing AddRange() from receiving a bare String
+            $resolved = @([System.Net.Dns]::GetHostAddresses($domain) |
                 Where-Object { $_.AddressFamily -eq 'InterNetwork' } |
-                ForEach-Object { $_.IPAddressToString }
-            if ($resolved) {
-                [void]$ips.AddRange($resolved)
-                Write-Host "  [DNS] $domain -> $($resolved -join ', ')" -ForegroundColor Cyan
+                ForEach-Object { $_.IPAddressToString })
+        } catch {
+            Write-Host "  [DNS] $domain -> failed to resolve (skipped)" -ForegroundColor DarkGray
+            continue
+        }
+
+        # Filter sinkholed responses (HOSTS file or upstream block)
+        $usable = @($resolved | Where-Object { $_ -notin @('0.0.0.0', '127.0.0.1') })
+
+        if ($usable.Count -eq 0) {
+            if ($resolved.Count -gt 0) {
+                Write-Host "  [DNS] $domain -> sinkholed ($($resolved -join ', ')) - skipped" -ForegroundColor Yellow
             } else {
                 Write-Host "  [DNS] $domain -> did not resolve (skipped)" -ForegroundColor DarkGray
             }
-        } catch {
-            Write-Host "  [DNS] $domain -> failed to resolve (skipped)" -ForegroundColor DarkGray
+            continue
         }
+
+        $ips.AddRange([string[]]$usable)
+        Write-Host "  [DNS] $domain -> $($usable -join ', ')" -ForegroundColor Cyan
     }
 
-    if ($ips.Count -eq 0) {
-        Write-Host "  [WARN] No IPs resolved for group '$Group' - no firewall rule created" -ForegroundColor Yellow
+    $unique = [string[]]($ips | Sort-Object -Unique)
+
+    if ($unique.Count -eq 0) {
+        Write-Host "  [WARN] No IPs for group '$Group' - existing rule left untouched" -ForegroundColor Yellow
         return
     }
 
-    # Remove any existing rules in this group before creating fresh ones
-    Get-NetFirewallRule -Group $Group -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-
-    # Create one rule blocking all resolved IPs on all outbound protocols/ports
-    $ipList = $ips -join ','
     $ruleName = "$Group (IP block)"
-    New-NetFirewallRule -DisplayName $ruleName -Group $Group `
-        -Direction Outbound -Action Block -Profile Any `
-        -RemoteAddress $ipList | Out-Null
-    Write-Host "  [OK] IP firewall rule '$ruleName' created blocking $($ips.Count) IP(s)" -ForegroundColor Green
+    try {
+        # Create new rule first, then remove old ones — so failure leaves
+        # the previous state intact
+        $new = New-NetFirewallRule -DisplayName $ruleName -Group $Group `
+                   -Direction Outbound -Action Block -Profile Any `
+                   -RemoteAddress $unique -ErrorAction Stop
+
+        Get-NetFirewallRule -Group $Group -ErrorAction SilentlyContinue |
+            Where-Object { $_.InstanceID -ne $new.InstanceID } |
+            Remove-NetFirewallRule
+
+        Write-Host "  [OK] Rule '$ruleName' blocking $($unique.Count) IP(s)" -ForegroundColor Green
+    } catch {
+        Write-Host "  [FAIL] Rule '$ruleName' NOT created: $($_.Exception.Message)" -ForegroundColor Red
+    }
 }
 
 function Uninstall-FirewallRules {
@@ -314,6 +341,10 @@ function Install-RotationTask($cfg) {
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
     $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest
 
+    # Security note: scheduled tasks with RunLevel=Highest run from
+    # wherever the script lives. Keep the script in a location writable
+    # only by administrators (e.g. C:\Program Files\GDID) to avoid
+    # persistence-primitive risk.
     if ($triggers.Count -eq 0) {
         Write-Host "  [SKIP] No triggers for rotationMode=$($cfg.rotationMode)" -ForegroundColor Yellow
         return
@@ -321,14 +352,15 @@ function Install-RotationTask($cfg) {
 
     Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $triggers -Settings $settings -Principal $principal -Force | Out-Null
     Write-Host "  [OK] Scheduled task '$taskName' created (mode: $($cfg.rotationMode))" -ForegroundColor Green
-}
 
-function Uninstall-RotationTask {
-    $taskName = "GDIDRotator"
-    Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
-    Write-Host "  [OK] Scheduled task '$taskName' removed" -ForegroundColor Green
+    # Warn if script lives in user-writable location
+    $isUserPath = $PSScriptRoot -match "^$([regex]::Escape($env:USERPROFILE))" -or
+                  $PSScriptRoot -match "^$([regex]::Escape($env:HOMEPATH))"
+    if ($isUserPath) {
+        Write-Host "  [SEC] Task runs as SYSTEM from a user-writable path: $PSScriptRoot" -ForegroundColor Yellow
+        Write-Host "  [SEC] Consider moving to a protected directory (C:\Program Files\GDID)" -ForegroundColor Yellow
+    }
 }
-
 function Install-IPRefreshTask {
     $taskName = "GDIDFirewallRefresh"
     $scriptPath = Join-Path $PSScriptRoot 'gdid-tool.ps1'
@@ -338,6 +370,12 @@ function Install-IPRefreshTask {
     $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest
     Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
     Write-Host "  [OK] Scheduled task '$taskName' created (daily IP refresh)" -ForegroundColor Green
+}
+
+function Uninstall-RotationTask {
+    $taskName = "GDIDRotator"
+    Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+    Write-Host "  [OK] Scheduled task '$taskName' removed" -ForegroundColor Green
 }
 
 function Uninstall-IPRefreshTask {
@@ -440,12 +478,22 @@ function Uninstall-FeatureKills {
 
 # ---------- Subcommands ----------
 function Show-Status {
-    Write-Host "`n===== GDID Status =====" -ForegroundColor Cyan
+    Write-Host "`n===== GDID Status =====`n" -ForegroundColor Cyan
     $gdid = Get-CurrentGDID
     if ($gdid) {
         Write-Host "  Current GDID hex:    $($gdid.hex)" -ForegroundColor White
         Write-Host "  Current GDID dec:    $($gdid.decimal)" -ForegroundColor White
         Write-Host "  Source:              $($gdid.source)" -ForegroundColor White
+
+        $cfg = Get-Config
+        if ($cfg.originalGDID -and $gdid.hex -eq $cfg.originalGDID) {
+            Write-Host "  Status:              ORIGINAL (spoof not active)" -ForegroundColor Yellow
+        } elseif ($cfg.originalGDID -and $gdid.hex -ne $cfg.originalGDID) {
+            Write-Host "  Status:              SPOOFED" -ForegroundColor Green
+            if (-not $cfg.blockCDP) {
+                Write-Host "  [!] CDPSvc running — GDID may revert on service restart" -ForegroundColor Yellow
+            }
+        }
     } else {
         Write-Host "  No GDID found (no MSA or account removed)" -ForegroundColor Yellow
     }
@@ -475,6 +523,13 @@ function Show-Status {
     } else {
         Write-Host "  None" -ForegroundColor DarkGray
     }
+
+    # Known limitations notice
+    Write-Host "`n-- Known Limitations --" -ForegroundColor Cyan
+    Write-Host "  IP rules: Azure Front Door endpoints rotate addresses with 4-120s TTLs." -ForegroundColor DarkGray
+    Write-Host "  Rotation:  When blockCDP=false, CDPSvc restores real GDID on restart." -ForegroundColor DarkGray
+    Write-Host "  HOSTS:     Name-based blocking is immune to IP churn (config: blockHosts)." -ForegroundColor DarkGray
+    Write-Host "  CDP:       Disabling CDPSvc is the strongest protection (config: blockCDP)." -ForegroundColor DarkGray
 
     Write-Host "`n-- Scheduled Tasks --" -ForegroundColor Cyan
     $rotatorTask = Get-ScheduledTask -TaskName "GDIDRotator" -ErrorAction SilentlyContinue
@@ -515,7 +570,16 @@ function Show-Status {
 }
 
 function Invoke-Rotate {
-    Write-Host "`n===== Rotating GDID =====" -ForegroundColor Cyan
+    Write-Host "`n===== Rotating GDID =====`n" -ForegroundColor Cyan
+
+    # Save original GDID before overwriting (only on first rotate)
+    $cfg = Get-Config
+    $original = Get-CurrentGDID
+    if ($original -and (-not $cfg.ContainsKey('originalGDID') -or (-not $cfg.originalGDID))) {
+        $cfg['originalGDID'] = $original.hex
+        Save-Config $cfg
+        Write-Host "  [INFO] Original GDID backed up: $($original.hex)" -ForegroundColor DarkGray
+    }
 
     $new = New-FakeGDID
     Write-Host "  New GDID: $new" -ForegroundColor White
@@ -523,26 +587,59 @@ function Invoke-Rotate {
     Write-GDID $new
     Clear-CDPState
 
-    $cfg = Get-Config
     $cfg['lastRotation'] = (Get-Date).ToString('o')
     Save-Config $cfg
 
-    Restart-CDP
+    if ($cfg.blockCDP) {
+        Write-Host "  [SKIP] CDP services disabled — rotation is persistent" -ForegroundColor Green
+        Write-Host "  [OK] Rotation complete" -ForegroundColor Green
+    } else {
+        Restart-CDP
+        Write-Host "  [OK] Rotation complete" -ForegroundColor Green
 
-    Write-Host "  [OK] Rotation complete" -ForegroundColor Green
-
-    # Verify
-    Start-Sleep 2
-    $after = Get-CurrentGDID
-    if ($after) {
-        Write-Host "  Current GDID: $($after.hex)" -ForegroundColor White
+        # Verify and warn about CDPSvc restoring the real GDID
+        Start-Sleep 2
+        $after = Get-CurrentGDID
+        if ($after) {
+            if ($after.hex -eq $new) {
+                Write-Host "  Current GDID: $($after.hex) (spoofed value held)" -ForegroundColor Green
+            } elseif ($original -and $after.hex -eq $original.hex) {
+                Write-Host "  Current GDID: $($after.hex) (restored by CDPSvc)" -ForegroundColor Yellow
+                Write-Host "  [NOTE] CDPSvc reloaded the real GDID from the device ticket." -ForegroundColor Yellow
+                Write-Host "  [NOTE] The spoofed value is only visible while CDP services are stopped." -ForegroundColor Yellow
+                Write-Host "  [NOTE] Set blockCDP=true to prevent reversion (disables CDP entirely)." -ForegroundColor Yellow
+            } else {
+                Write-Host "  Current GDID: $($after.hex)" -ForegroundColor White
+            }
+        }
     }
 }
 
 function Install-All {
     $cfg = Get-Config
 
-    Write-Host "`n===== Installing GDID Privacy =====" -ForegroundColor Cyan
+    Write-Host "`n===== Installing GDID Privacy =====`n" -ForegroundColor Cyan
+
+    # First-run guidance
+    if (-not $cfg.originalGDID) {
+        Write-Host "----------------------------------------------------------------------" -ForegroundColor DarkGray
+        Write-Host "  IMPORTANT — Known Limitations" -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "  IP-based firewall blocking is limited: these endpoints use Azure" -ForegroundColor White
+        Write-Host "  Front Door shared frontends with TTLs as low as 4 seconds. Rules" -ForegroundColor White
+        Write-Host "  created at one moment may not match the address CDP connects to" -ForegroundColor White
+        Write-Host "  moments later." -ForegroundColor White
+        Write-Host ""
+        Write-Host "  GDID rotation is local-only when blockCDP=false (the default)." -ForegroundColor White
+        Write-Host "  CDPSvc restores the real GDID from the device ticket on restart." -ForegroundColor White
+        Write-Host "  Microsoft still sees the real PUID on any wlidsvc contact." -ForegroundColor White
+        Write-Host ""
+        Write-Host "  For strongest protection: .\gdid-tool.ps1 config blockCDP true" -ForegroundColor Cyan
+        Write-Host "  This disables CDP services entirely (rotation becomes persistent)." -ForegroundColor Cyan
+        Write-Host "  Or use blockHosts=true for name-based blocking immune to IP churn." -ForegroundColor Cyan
+        Write-Host "----------------------------------------------------------------------" -ForegroundColor DarkGray
+        Write-Host ""
+    }
 
     Invoke-Rotate
 
@@ -554,8 +651,9 @@ function Install-All {
         Install-IPRefreshTask
     }
 
-    Write-Host "`n===== Install Complete =====" -ForegroundColor Green
-    Write-Host "Run '.\gdid-tool.ps1 status' to verify." -ForegroundColor White
+    Write-Host "`n===== Install Complete =====`n" -ForegroundColor Green
+    Write-Host "Run '.\\gdid-tool.ps1 status' to verify." -ForegroundColor White
+    Write-Host "Run '.\\gdid-tool.ps1 config' to adjust settings." -ForegroundColor White
 }
 
 function Uninstall-All {
@@ -613,15 +711,23 @@ Modes:
 Config keys:
   rotationMode      perBoot / timed / onDemand
   timedIntervalMin  15-1440 (minutes)
-  blockDDS          true/false  Block dds.microsoft.com endpoints
-  blockActivity     true/false  Block activity.windows.com
-  blockCDP          true/false  Disable CDPSvc/CDPUserSvc services
+  blockDDS          true/false  Block aad.cs.dds.microsoft.com (firewall)
+  blockActivity     true/false  Block activity.windows.com (firewall)
+  blockCDP          true/false  Disable CDPSvc/CDPUserSvc entirely (OFF by default)
   killPhoneLink     true/false  Disable Phone Link (cross-device tracking)
   killOneDrive      true/false  Disable OneDrive sync (GDID telemetry)
   killStore         true/false  Disable Store auto-updates
   killTimeline      true/false  Disable Activity History / Timeline
   blockDO           true/false  Disable Delivery Optimization service (DoSvc)
-  blockHosts        true/false  Block via HOSTS file (in addition to firewall)
+  blockHosts        true/false  Block via HOSTS file (immune to IP address churn)
+
+Known limitations:
+  - IP-based firewall rules: Azure Front Door TTLs are 4-120 seconds.
+    Rules may not match the address CDP connects to moments later.
+  - GDID rotation without blockCDP: CDPSvc restores the real GDID from
+    the device ticket on restart. The spoof is local-only.
+  - Strongest protection: config blockCDP true (disables CDP entirely)
+    or blockHosts true (name-based blocking, immune to IP rotation).
 
 Examples:
   .\gdid-tool.ps1 status
@@ -631,6 +737,7 @@ Examples:
   .\gdid-tool.ps1 config rotationMode timed
   .\gdid-tool.ps1 config timedIntervalMin 15
   .\gdid-tool.ps1 config killPhoneLink true
+  .\gdid-tool.ps1 config blockHosts true
   .\gdid-tool.ps1 install
 "@
 }
