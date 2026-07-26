@@ -213,7 +213,7 @@ Toggle these to disable specific Microsoft services that use or depend on the GD
 | `killOneDrive` | `false` | OneDrive file sync |
 | `killStore` | `false` | Microsoft Store auto-updates |
 | `killTimeline` | `false` | Activity History / Timeline |
-| `blockCDP` | `false` | CDPSvc / CDPUserSvc entirely |
+| `blockCDP` | `true` | CDPSvc / CDPUserSvc entirely |
 
 ### Advanced
 
@@ -257,10 +257,10 @@ Toggle these to disable specific Microsoft services that use or depend on the GD
 2. **Back up** the original GDID on first run (stored in `gdid-config.json`)
 3. **Write** to both registry locations (`ExtendedProperties\LID` + `Token\{GUID}\DeviceId`)
 4. **Clear** `%LOCALAPPDATA%\ConnectedDevicesPlatform` (stale CDP state cache)
-5. **Restart** CDP services — **important:** this causes CDPSvc to reload the real GDID from its DPAPI-wrapped DeviceTicket and restore it. When `blockCDP=false` (default), the spoof is local-only and self-reverts.
+5. **Disable CDP services** (the default) — the spoofed value persists across reboots and the real GDID is never reported
 6. **Block** endpoints via Windows Firewall (IP-based) and/or HOSTS file (name-based)
 
-> **With `blockCDP=true`:** CDP services stay disabled, the spoofed value persists across reboots, and no GDID is ever reported. This is the strongest protection but disables all CDP-dependent features (Nearby Share, cross-device clipboard, "Continue on PC").
+> **CDP disable is ON by default.** This is the strongest protection. If you need Nearby Share, cross-device clipboard, or "Continue on PC", set `blockCDP=false` — but be aware that without it, CDPSvc reloads the real GDID from its DPAPI DeviceTicket on restart, making rotation local-only and self-reverting.
 
 ---
 
@@ -307,12 +307,15 @@ msbuild gdid-hook.vcxproj /p:Configuration=Release /p:Platform=x64
 ### IP-based firewall blocking
 These endpoints use **Azure Front Door** shared frontends with DNS TTLs as low as **4 seconds**. A firewall rule created at one moment may not match the IP address CDP connects to moments later. IP-based blocking provides a partial defense; it is not a reliable block.
 
-**Recommendation:** Use `blockHosts=true` for name-based HOSTS file blocking (immune to IP rotation) or `blockCDP=true` to disable the tracking vector entirely.
+**Recommendation:** `blockCDP=true` (ON by default) eliminates the tracking vector entirely. For name-based blocking without disabling CDP, use `blockHosts=true`.
 
-### GDID rotation is local-only (without blockCDP)
-When `blockCDP=false` (the default), CDPSvc holds the real GDID in a DPAPI-wrapped **DeviceTicket**. Restarting CDPSvc reloads the real value and overwrites the spoofed registry entry. The spoof is visible only to local readers while CDP services are stopped. Microsoft still sees the real PUID on any `wlidsvc` contact (Store, activation, WNS).
-
-**Recommendation:** Set `blockCDP=true` if you want persistent rotation without reversion.
+### CDP services are disabled by default
+When `blockCDP=true` (the default), CDPSvc and CDPUserSvc are set to Disabled. This means Nearby Share, cross-device clipboard, and "Continue on PC" will not work. If you need these features:
+```powershell
+.\gdid-tool.ps1 config blockCDP false
+.\gdid-tool.ps1 install
+```
+Without CDP disable, rotation is local-only — CDPSvc restores the real GDID from its DeviceTicket on restart.
 
 ### Domain list maintenance
 Several domains originally shipped were verified as `NXDOMAIN` (non-existent) as of July 2026. The current lists only include domains confirmed to resolve. Domain availability changes over time — report new findings via GitHub issues.

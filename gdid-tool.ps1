@@ -50,7 +50,7 @@ $DefaultConfig = @{
     timedIntervalMin  = 30
     blockDDS          = $true
     blockActivity     = $true
-    blockCDP          = $false      # OFF by default: disables CDPSvc/CDPUserSvc entirely
+    blockCDP          = $true       # ON by default: disables CDPSvc/CDPUserSvc for max protection
     killPhoneLink     = $false
     killOneDrive      = $false
     killStore         = $false
@@ -525,11 +525,15 @@ function Show-Status {
     }
 
     # Known limitations notice
-    Write-Host "`n-- Known Limitations --" -ForegroundColor Cyan
-    Write-Host "  IP rules: Azure Front Door endpoints rotate addresses with 4-120s TTLs." -ForegroundColor DarkGray
-    Write-Host "  Rotation:  When blockCDP=false, CDPSvc restores real GDID on restart." -ForegroundColor DarkGray
-    Write-Host "  HOSTS:     Name-based blocking is immune to IP churn (config: blockHosts)." -ForegroundColor DarkGray
-    Write-Host "  CDP:       Disabling CDPSvc is the strongest protection (config: blockCDP)." -ForegroundColor DarkGray
+    Write-Host "`n-- Protection Summary --" -ForegroundColor Cyan
+    if ($cfg.blockCDP) {
+        Write-Host "  CDP:       DISABLED — rotation is persistent, GDID never reported" -ForegroundColor Green
+    } else {
+        Write-Host "  CDP:       ENABLED — rotation is local-only, reverts on restart" -ForegroundColor Yellow
+    }
+    Write-Host "  IP rules:  Azure endpoints rotate addresses with 4-120s TTLs" -ForegroundColor DarkGray
+    Write-Host "  HOSTS:     $($(if ($cfg.blockHosts) {'ACTIVE — name-based blocking active'} else {'off — config: blockHosts=true for reliable blocking'}))" -ForegroundColor $(if ($cfg.blockHosts) {'Green'} else {'DarkGray'})
+    Write-Host "  Settings:  .\\gdid-tool.ps1 config <key> <value>" -ForegroundColor DarkGray
 
     Write-Host "`n-- Scheduled Tasks --" -ForegroundColor Cyan
     $rotatorTask = Get-ScheduledTask -TaskName "GDIDRotator" -ErrorAction SilentlyContinue
@@ -630,13 +634,14 @@ function Install-All {
         Write-Host "  created at one moment may not match the address CDP connects to" -ForegroundColor White
         Write-Host "  moments later." -ForegroundColor White
         Write-Host ""
-        Write-Host "  GDID rotation is local-only when blockCDP=false (the default)." -ForegroundColor White
-        Write-Host "  CDPSvc restores the real GDID from the device ticket on restart." -ForegroundColor White
-        Write-Host "  Microsoft still sees the real PUID on any wlidsvc contact." -ForegroundColor White
+        Write-Host "  CDP services are DISABLED by default (blockCDP=true). This is" -ForegroundColor Green
+        Write-Host "  the strongest protection: the real GDID is never reported." -ForegroundColor Green
+        Write-Host "  Rotation is persistent — the spoofed value sticks across reboots." -ForegroundColor Green
         Write-Host ""
-        Write-Host "  For strongest protection: .\gdid-tool.ps1 config blockCDP true" -ForegroundColor Cyan
-        Write-Host "  This disables CDP services entirely (rotation becomes persistent)." -ForegroundColor Cyan
-        Write-Host "  Or use blockHosts=true for name-based blocking immune to IP churn." -ForegroundColor Cyan
+        Write-Host "  To re-enable CDP (Nearby Share, cross-device clipboard, etc.):" -ForegroundColor DarkGray
+        Write-Host "    .\\gdid-tool.ps1 config blockCDP false" -ForegroundColor DarkGray
+        Write-Host "    .\\gdid-tool.ps1 install" -ForegroundColor DarkGray
+        Write-Host "  (Without CDP disable, rotation is local-only and self-reverts.)" -ForegroundColor DarkGray
         Write-Host "----------------------------------------------------------------------" -ForegroundColor DarkGray
         Write-Host ""
     }
@@ -713,7 +718,7 @@ Config keys:
   timedIntervalMin  15-1440 (minutes)
   blockDDS          true/false  Block aad.cs.dds.microsoft.com (firewall)
   blockActivity     true/false  Block activity.windows.com (firewall)
-  blockCDP          true/false  Disable CDPSvc/CDPUserSvc entirely (OFF by default)
+  blockCDP          true/false  Disable CDPSvc/CDPUserSvc entirely (ON by default)
   killPhoneLink     true/false  Disable Phone Link (cross-device tracking)
   killOneDrive      true/false  Disable OneDrive sync (GDID telemetry)
   killStore         true/false  Disable Store auto-updates
@@ -722,12 +727,13 @@ Config keys:
   blockHosts        true/false  Block via HOSTS file (immune to IP address churn)
 
 Known limitations:
+  - CDP is disabled by default (blockCDP=true) for maximum protection.
+    Set blockCDP=false to re-enable Nearby Share, cross-device clipboard,
+    and other CDP-dependent features. Rotation becomes local-only.
   - IP-based firewall rules: Azure Front Door TTLs are 4-120 seconds.
     Rules may not match the address CDP connects to moments later.
-  - GDID rotation without blockCDP: CDPSvc restores the real GDID from
-    the device ticket on restart. The spoof is local-only.
-  - Strongest protection: config blockCDP true (disables CDP entirely)
-    or blockHosts true (name-based blocking, immune to IP rotation).
+  - For reliable blocking without disabling CDP, use blockHosts=true
+    (name-based HOSTS file blocking, immune to IP rotation).
 
 Examples:
   .\gdid-tool.ps1 status
