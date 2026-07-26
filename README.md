@@ -214,6 +214,7 @@ Toggle these to disable specific Microsoft services that use or depend on the GD
 | `killStore` | `false` | Microsoft Store auto-updates |
 | `killTimeline` | `false` | Activity History / Timeline |
 | `blockCDP` | `true` | CDPSvc / CDPUserSvc entirely |
+| `blockHosts` | `true` | HOSTS file blocking (name-based, immune to IP churn) |
 
 ### Advanced
 
@@ -305,9 +306,9 @@ msbuild gdid-hook.vcxproj /p:Configuration=Release /p:Platform=x64
 ## 🧠 Known Limitations
 
 ### IP-based firewall blocking
-These endpoints use **Azure Front Door** shared frontends with DNS TTLs as low as **4 seconds**. A firewall rule created at one moment may not match the IP address CDP connects to moments later. IP-based blocking provides a partial defense; it is not a reliable block.
+These endpoints use **Azure Front Door** shared frontends with DNS TTLs as low as **4 seconds**. A firewall rule created at one moment may not match the IP address CDP connects to moments later. IP-based blocking provides a partial defense at best; it is structurally unreliable.
 
-**Recommendation:** `blockCDP=true` (ON by default) eliminates the tracking vector entirely. For name-based blocking without disabling CDP, use `blockHosts=true`.
+**The solution:** `blockHosts=true` (ON by default) uses name-based HOSTS file blocking that is immune to IP rotation. `blockCDP=true` (also ON by default) eliminates the tracking vector entirely.
 
 ### CDP services are disabled by default
 When `blockCDP=true` (the default), CDPSvc and CDPUserSvc are set to Disabled. This means Nearby Share, cross-device clipboard, and "Continue on PC" will not work. If you need these features:

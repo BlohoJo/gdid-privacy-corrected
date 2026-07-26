@@ -56,7 +56,7 @@ $DefaultConfig = @{
     killStore         = $false
     killTimeline      = $false
     blockDO           = $false      # Disable Delivery Optimization service (DoSvc)
-    blockHosts        = $false      # Block via HOSTS file in addition to firewall
+    blockHosts        = $true       # ON by default: HOSTS blocking is name-based and immune to IP churn
     hookMethod        = 'registry'   # registry | api | none
     lastRotation      = $null
     originalGDID      = $null
@@ -527,12 +527,16 @@ function Show-Status {
     # Known limitations notice
     Write-Host "`n-- Protection Summary --" -ForegroundColor Cyan
     if ($cfg.blockCDP) {
-        Write-Host "  CDP:       DISABLED — rotation is persistent, GDID never reported" -ForegroundColor Green
+        Write-Host "  CDP:       DISABLED — rotation persistent, GDID never reported" -ForegroundColor Green
     } else {
-        Write-Host "  CDP:       ENABLED — rotation is local-only, reverts on restart" -ForegroundColor Yellow
+        Write-Host "  CDP:       ENABLED — rotation local-only, reverts on restart" -ForegroundColor Yellow
     }
-    Write-Host "  IP rules:  Azure endpoints rotate addresses with 4-120s TTLs" -ForegroundColor DarkGray
-    Write-Host "  HOSTS:     $($(if ($cfg.blockHosts) {'ACTIVE — name-based blocking active'} else {'off — config: blockHosts=true for reliable blocking'}))" -ForegroundColor $(if ($cfg.blockHosts) {'Green'} else {'DarkGray'})
+    if ($cfg.blockHosts) {
+        Write-Host "  HOSTS:     ACTIVE — name-based blocking (immune to IP rotation)" -ForegroundColor Green
+    } else {
+        Write-Host "  HOSTS:     off — config: blockHosts=true for reliable blocking" -ForegroundColor DarkGray
+    }
+    Write-Host "  IP rules:  Limited — Azure endpoints rotate addresses every 4-120s" -ForegroundColor DarkGray
     Write-Host "  Settings:  .\\gdid-tool.ps1 config <key> <value>" -ForegroundColor DarkGray
 
     Write-Host "`n-- Scheduled Tasks --" -ForegroundColor Cyan
@@ -629,19 +633,18 @@ function Install-All {
         Write-Host "----------------------------------------------------------------------" -ForegroundColor DarkGray
         Write-Host "  IMPORTANT — Known Limitations" -ForegroundColor Yellow
         Write-Host ""
-        Write-Host "  IP-based firewall blocking is limited: these endpoints use Azure" -ForegroundColor White
-        Write-Host "  Front Door shared frontends with TTLs as low as 4 seconds. Rules" -ForegroundColor White
-        Write-Host "  created at one moment may not match the address CDP connects to" -ForegroundColor White
-        Write-Host "  moments later." -ForegroundColor White
+        Write-Host "  IP-based firewall blocking has fundamental limits: Azure Front Door" -ForegroundColor White
+        Write-Host "  endpoints rotate addresses every 4-120 seconds. IP rules go stale" -ForegroundColor White
+        Write-Host "  almost immediately. HOSTS blocking (blockHosts=true, ON by default)" -ForegroundColor Green
+        Write-Host "  is name-based and immune to IP rotation — it actually works." -ForegroundColor Green
         Write-Host ""
         Write-Host "  CDP services are DISABLED by default (blockCDP=true). This is" -ForegroundColor Green
         Write-Host "  the strongest protection: the real GDID is never reported." -ForegroundColor Green
-        Write-Host "  Rotation is persistent — the spoofed value sticks across reboots." -ForegroundColor Green
         Write-Host ""
         Write-Host "  To re-enable CDP (Nearby Share, cross-device clipboard, etc.):" -ForegroundColor DarkGray
         Write-Host "    .\\gdid-tool.ps1 config blockCDP false" -ForegroundColor DarkGray
+        Write-Host "    .\\gdid-tool.ps1 config blockHosts true  (keep HOSTS blocking)" -ForegroundColor DarkGray
         Write-Host "    .\\gdid-tool.ps1 install" -ForegroundColor DarkGray
-        Write-Host "  (Without CDP disable, rotation is local-only and self-reverts.)" -ForegroundColor DarkGray
         Write-Host "----------------------------------------------------------------------" -ForegroundColor DarkGray
         Write-Host ""
     }
@@ -724,7 +727,7 @@ Config keys:
   killStore         true/false  Disable Store auto-updates
   killTimeline      true/false  Disable Activity History / Timeline
   blockDO           true/false  Disable Delivery Optimization service (DoSvc)
-  blockHosts        true/false  Block via HOSTS file (immune to IP address churn)
+  blockHosts        true/false  Block via HOSTS file (ON by default, name-based)
 
 Known limitations:
   - CDP is disabled by default (blockCDP=true) for maximum protection.
