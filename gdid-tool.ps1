@@ -230,7 +230,7 @@ function Install-RotationTask($cfg) {
     }
 
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
-    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest
+    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest -LogonType S4U
 
     # Security note: scheduled tasks with RunLevel=Highest run from
     # wherever the script lives. Keep the script in a location writable
@@ -294,8 +294,14 @@ function Install-FeatureKills($cfg) {
     if ($cfg.blockCDP) {
         Set-Service CDPSvc -StartupType Disabled
         Set-Service CDPUserSvc -StartupType Disabled
+        # Per-user service instances (CDPUserSvc_*) are template-based and
+        # can't be disabled individually — Windows rejects it. Skip them.
         Get-Service 'CDPUserSvc_*' -ErrorAction SilentlyContinue | ForEach-Object {
-            Set-Service $_.Name -StartupType Disabled
+            try {
+                Set-Service $_.Name -StartupType Disabled -ErrorAction Stop
+            } catch {
+                Write-Host "  [SKIP] $($_.Name) is a per-user instance — can't disable individually" -ForegroundColor DarkGray
+            }
         }
         Write-Host "  [OK] CDP services disabled" -ForegroundColor Green
     }
@@ -330,7 +336,11 @@ function Uninstall-FeatureKills {
     Set-Service CDPSvc -StartupType Manual -ErrorAction SilentlyContinue
     Set-Service CDPUserSvc -StartupType Manual -ErrorAction SilentlyContinue
     Get-Service 'CDPUserSvc_*' -ErrorAction SilentlyContinue | ForEach-Object {
-        Set-Service $_.Name -StartupType Manual -ErrorAction SilentlyContinue
+        try {
+            Set-Service $_.Name -StartupType Manual -ErrorAction Stop
+        } catch {
+            # Per-user instances can't be configured individually — skip
+        }
     }
 
     Set-Service DoSvc -StartupType Manual -ErrorAction SilentlyContinue
@@ -389,7 +399,7 @@ function Show-Status {
     } else {
         Write-Host "  HOSTS:     off — config: blockHosts=true for reliable blocking" -ForegroundColor DarkGray
     }
-    Write-Host "  Settings:  .\\gdid-tool.ps1 config <key> <value>" -ForegroundColor DarkGray
+    Write-Host "  Settings:  .\\gdid-tool.ps1 config [key] [value]" -ForegroundColor DarkGray
 
     Write-Host "`n-- Scheduled Tasks --" -ForegroundColor Cyan
     $rotatorTask = Get-ScheduledTask -TaskName "GDIDRotator" -ErrorAction SilentlyContinue
@@ -538,7 +548,7 @@ function Show-Config {
     } else {
         Write-Host "`n-- GDID Configuration --" -ForegroundColor Cyan
         $cfg | Format-List
-        Write-Host "Usage: .\gdid-tool.ps1 config <key> [value]"
+        Write-Host "Usage: .\gdid-tool.ps1 config [key] [value]"
     }
 }
 
