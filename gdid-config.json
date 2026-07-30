@@ -1,4 +1,21 @@
 {
+  "schemaVersion": 5,
+  "rotationMode": "onDemand",
+  "timedIntervalMin": 30,
+  "blockCDP": true,
+  "blockWpn": false,
+  "blockTelemetry": false,
+  "requestDiagnosticDataDelete": false,
+  "blockHosts": true,
+  "blockAADHost": false,
+  "blockDO": false,
+  "killPhoneLink": false,
+  "killOneDrive": false,
+  "killStore": false,
+  "killTimeline": false,
+  "hookMethod": "registry"
+}
+{
     "rotationMode":     "perBoot",
     "timedIntervalMin": 30,
     "blockDDS":         true,
