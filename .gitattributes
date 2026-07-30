@@ -2,5 +2,5 @@
 * text=auto eol=lf
 
 # Command Prompt launchers are intentionally stored and checked out as CRLF.
-*.bat -text
-*.cmd -text
+*.bat text eol=crlf
+*.cmd text eol=crlf
