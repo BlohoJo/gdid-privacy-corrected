@@ -1,4 +1,4 @@
-cb4532afab2040001780eedaa47fa642da37d3891d210425a6e154015e96c1a8  ./.gitattributes
+79f0ef0c5e747a7492bda4464ed9b8aa08a92af1ae37dc02bf6ce8e087595c34  ./.gitattributes
 535635d0b3daffb7c427079982f635c3c2ae57419213f0af68f77ed774431d89  ./.github/workflows/powershell-validation.yml
 e372fd09a50d0962e49e9cfebb28a25077fe4357c1dc371af6f83c4b4a35fd19  ./AUDIT_REPORT.md
 22bbba41d7efb4c9de2af7fcc06ddce80d251dd8ad2271264535032a8586b28c  ./build-exe.ps1
