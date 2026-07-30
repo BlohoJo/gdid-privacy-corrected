@@ -173,7 +173,7 @@ Require-Match $main ([ordered]@{
 }) 'Version/schema'
 
 Require-Match $gitAttributes ([ordered]@{
-    'default LF checkout rule' = '(?m)^\*\s+text=auto\s+eol=lf\s*$'
+    'default LF checkout/archive rule' = '(?m)^\*\s+text=auto\s+eol=lf\s*$'
     'BAT forced-CRLF rule' = '(?m)^\*\.bat\s+text\s+eol=crlf\s*$'
     'CMD forced-CRLF rule' = '(?m)^\*\.cmd\s+text\s+eol=crlf\s*$'
 }) 'Git line-ending policy'
