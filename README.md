@@ -1,340 +1,467 @@
-<div align="center">
-  <br/>
-  <h1>🛡️ GDID Privacy Tool</h1>
-  <p><strong>View · Rotate · Spoof · Block</strong> — Windows Global Device Identifier tracking</p>
-  <br/>
+# GDID Privacy Tool — Audited Telemetry/WPN Build 3.7.2
 
-  [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-  [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078d6)](https://github.com)
-  [![Language](https://img.shields.io/badge/Language-PowerShell-5391FE)](https://github.com)
-  [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](https://github.com)
-  [![Maintained](https://img.shields.io/badge/Maintained-yes-2ea44f)](https://github.com)
+This package is a corrected and deliberately narrower revision of the original **gdid-privacy** project. It focuses on system changes that can be applied, verified, and restored locally.
 
-  <br/>
+It can:
 
-  <img src="https://img.shields.io/badge/Based%20on-RE%20research%20of%20wlidsvc.dll%20%E2%86%92%20cdp.dll%20%E2%86%92%20DDS-8A2BE2" alt="RE Research"/>
+- inspect the current user's known `LID` and `DeviceId` registry copies;
+- disable and stop Connected Devices Platform (CDP) services before applying a local registry mask;
+- optionally disable Windows Push Notification Services (`WpnService`, `WpnUserService`, and current `WpnUserService_*` instances);
+- optionally disable Connected User Experiences and Telemetry (`DiagTrack`) and Device Management WAP Push (`dmwappushservice`);
+- apply and report edition-aware Windows diagnostic-data policies;
+- apply the policy equivalents of turning off optional diagnostic data, tailored experiences, and inking/typing diagnostic collection;
+- optionally submit Windows' supported diagnostic-data deletion request;
+- add selected exact-name HOSTS entries;
+- apply several other documented privacy/feature policies; and
+- restore exact protected pre-tool values during `uninstall`.
 
-  <br/>
-  <br/>
-</div>
+It **cannot rotate or replace Microsoft's authoritative server-issued Device PUID or the DPAPI-protected DeviceTicket**. The `rotate` command is a local registry mask only. It also cannot prove that every Microsoft component, application, security product, or identity path has stopped transmitting data.
 
----
+## Safety and scope warnings
 
-## 📋 Overview
+The high-collateral controls are **off by default**:
 
-The **GDID (Global Device Identifier)** is a persistent 64-bit device ID that Microsoft assigns to every Windows installation. It's used across the Connected Devices Platform, Delivery Optimization, and Microsoft telemetry to track devices — even **without** a Microsoft Account login.
-
-This tool **disables the tracking vector** on your own machine: CDP services are turned off and the tracking endpoints are blocked via the HOSTS file. Both are ON by default. No IP-based firewall tricks that break against 4-second TTLs — just the two things that actually work.
-
-<div align="center">
-  <br/>
-  <pre style="background: #0d1117; padding: 16px; border-radius: 8px;">
-    <span style="color: #58a6ff;">.\gdid-tool.ps1 status</span>     → Show current GDID
-    <span style="color: #58a6ff;">.\gdid-tool.ps1 rotate</span>     → Spoof a new ID now
-    <span style="color: #58a6ff;">.\gdid-tool.ps1 install</span>    → Lock it down
-    <span style="color: #58a6ff;">.\gdid-tool.ps1 uninstall</span>  → Restore defaults
-  </pre>
-  <br/>
-</div>
-
----
-
-## 🔬 How GDID Works
-
-Based on full reverse engineering of the Windows identity stack (see the [original research](https://github.com/SmtimesIWndr/gdid-reversal)):
-
-```
-wlidsvc.dll  ──provision──→  login.live.com  ──assigns──→  64-bit Device PUID
-       │                                                          │
-       └───────── stores ─────────────────────────────────────────┘
-                                    │
-                                    ▼
-                    HKCU\...\IdentityCRL\ExtendedProperties\LID
-                                    │
-                    cdp.dll (CDPSvc) reads it
-                                    │
-                    ┌───────────────┼───────────────┐
-                    ▼               ▼               ▼
-           dds.microsoft.com  activity.windows.com  Delivery Optimization
-           (Device Directory   (Activity History)   (UCDOStatus.GlobalDeviceId)
-            Service)
+```json
+"blockWpn": false,
+"blockTelemetry": false,
+"requestDiagnosticDataDelete": false
 ```
 
-| Detail | Value |
-|--------|-------|
-| **Type** | 64-bit Device PUID (Passport Unique ID) |
-| **Prefix** | `0018` (device class), `0003` (user class) |
-| **Assigned by** | `login.live.com` during MSA provisioning (SOAP `<ps:DevicePUID>`) |
-| **Stored at** | `HKCU\SOFTWARE\Microsoft\IdentityCRL\ExtendedProperties\LID` |
-| **Also at** | `HKCU\SOFTWARE\Microsoft\IdentityCRL\Immersive\production\Token\{GUID}\DeviceId` |
-| **Reported by** | Delivery Optimization as `UCDOStatus.GlobalDeviceId` |
-| **Persists** | Across Windows updates — changes only on **reinstall** |
-| **Local-only?** | **No** — CDP still creates an anonymous device identity even without an MSA login, and reports it to the same endpoints |
+`blockWpn=true` can disable cloud push notifications, local toast/tile/raw-notification workflows, Store-app background behavior, and WNS-triggered management operations.
 
-> **Key insight:** GDID is **server-assigned**, not derived from hardware. A reinstall gets a new one. The client provisions with `login.live.com` and stores whatever PUID the server returns.
+`blockTelemetry=true` can break or degrade:
 
----
+- Microsoft Intune and other MDM synchronization that depends on `dmwappushservice`;
+- Endpoint Analytics and Windows Update for Business reporting;
+- diagnostic troubleshooting and reliability reporting;
+- features that depend on OneSettings configuration downloads; and
+- other management workflows that expect `DiagTrack` to be available.
 
-## 🚀 Quick Start
+Stopping `DiagTrack` is **not** a guarantee that Microsoft Defender for Endpoint or every other Microsoft component stops transmitting its own security or diagnostic data. Do not enable these controls on a managed production machine without testing.
 
-### Requirements
-- Windows 10 or Windows 11
-- PowerShell 5.1+ (run as **Administrator**)
+## Requirements
 
-### Install
+- Windows 10, Windows 11, or Windows Server 2016 and later
+- Windows PowerShell 5.1 or PowerShell 7+
+- Administrator rights for `install` and `uninstall`
+- The same Windows account for `install`, `rotate`, `status`, and `uninstall`, because the identity values and several privacy policies are under that user's HKCU hive
 
-**Option A — Clone with Git (PowerShell or CMD):**
+The installing account should itself be a member of Administrators. Do not elevate a standard-user session by entering credentials for a different administrator account; doing so targets the administrator's HKCU rather than the standard user's hive.
 
-```powershell
-git clone https://github.com/someguy0110/gdid-privacy.git
-cd gdid-privacy
-```
+## Quick start
 
-**Option B — Download the script only (no Git needed):**
+### Validate the package before invoking the main script
 
-PowerShell:
-```powershell
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/someguy0110/gdid-privacy/main/gdid-tool.ps1" -OutFile "gdid-tool.ps1"
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/someguy0110/gdid-privacy/main/gdid-config.json" -OutFile "gdid-config.json"
-```
+The first command after extracting the package should be:
 
-CMD:
 ```cmd
-curl -LO https://raw.githubusercontent.com/someguy0110/gdid-privacy/main/gdid-tool.ps1
-curl -LO https://raw.githubusercontent.com/someguy0110/gdid-privacy/main/gdid-config.json
+.\tests\Run-AllChecks.cmd
 ```
 
-Then run (as Administrator):
-```powershell
-.\gdid-tool.ps1 install
-```
+This non-mutating gate parses every PowerShell file under **Windows PowerShell
+5.1 and PowerShell 7**, runs the package/static checks, and smoke-tests `help`,
+`config`, and read-only `status` under both engines. It writes one complete log
+under `tests\validation-results`. Do not proceed to `install` unless the final
+summary reports zero failures. See [`TESTING.md`](TESTING.md).
 
-> **Quick fix — "There's nothing to open .ps1 with" / script won't run:**
-> This happens when you double-click the `.ps1` file (Windows doesn't associate `.ps1` with PowerShell) or when scripts are blocked by policy. Don't double-click. Open **PowerShell as Administrator**, then paste this one line (adjust the path):
-> ```powershell
-> powershell -ExecutionPolicy Bypass -File "C:\path\to\gdid-tool\gdid-tool.ps1" install
-> ```
-> This launches the script directly through PowerShell, bypassing both the file-association dialog and the execution-policy block.
-
-That's it. The tool will:
-1. Read your current GDID and back it up
-2. Generate and write a fake one
-3. Clear local CDP state
-4. Disable CDP services (prevents reversion to the real GDID)
-5. Add HOSTS file blocks for the tracking endpoints
-6. Create a scheduled task for automatic rotation
-
-### Verify
+After validation passes, inspect without changing anything:
 
 ```powershell
 .\gdid-tool.ps1 status
 ```
 
----
+Apply the default audited hardening:
 
-## 🪟 Easy Options (No Terminal Needed)
+```powershell
+.\gdid-tool.ps1 install
+```
 
-### 1. Double-click launcher (`.bat`)
-Just double-click **`gdid-tool.bat`**. It automatically asks for Administrator (UAC) and runs `install`. To use other commands, run it from a prompt or pass arguments:
+Enable the WPN service block:
+
+```powershell
+.\gdid-tool.ps1 config blockWpn true
+.\gdid-tool.ps1 install
+```
+
+Enable diagnostic-data policy/service hardening:
+
+```powershell
+.\gdid-tool.ps1 config blockTelemetry true
+.\gdid-tool.ps1 install
+```
+
+Request one supported diagnostic-data deletion operation during the next install:
+
+```powershell
+.\gdid-tool.ps1 config blockTelemetry true
+.\gdid-tool.ps1 config requestDiagnosticDataDelete true
+.\gdid-tool.ps1 install
+```
+
+The deletion flag is one-shot. It resets to `false` only after Windows accepts the request. Acceptance means the request was submitted; it is not proof that Microsoft has completed server-side deletion.
+
+Restore every managed value to the protected pre-tool baseline:
+
+```powershell
+.\gdid-tool.ps1 uninstall
+```
+
+## Commands
+
+| Command | Purpose |
+|---|---|
+| `status` | Report identity copies, edition/build, diagnostic-data minimum, CDP/WPN/telemetry services, managed policies, Settings-equivalent controls, HOSTS entries, task state, rollback state, and limitations. |
+| `rotate` | Replace safely backed current-user `LID`/`DeviceId` registry copies with a new local mask after CDP is verified disabled. This is not server-side rotation. |
+| `install` | Capture or migrate a protected baseline, reconcile all configuration, run `gpupdate /force`, verify policy values, optionally request data deletion, manage services, apply a local mask, and reconcile the task/HOSTS block. |
+| `uninstall` | Restore the protected identity, policy, service, HOSTS, and task baseline; run `gpupdate /force`; retain the backup if any verification fails. |
+| `config` | Show all configuration. |
+| `config <key>` | Show one setting. |
+| `config <key> <value>` | Change one setting; run `install` afterward to reconcile actual state. |
+| `help` | Show built-in help. |
+
+## Configuration
+
+The shipped `gdid-config.json` is:
+
+```json
+{
+  "schemaVersion": 5,
+  "rotationMode": "onDemand",
+  "timedIntervalMin": 30,
+  "blockCDP": true,
+  "blockWpn": false,
+  "blockTelemetry": false,
+  "requestDiagnosticDataDelete": false,
+  "blockHosts": true,
+  "blockAADHost": false,
+  "blockDO": false,
+  "killPhoneLink": false,
+  "killOneDrive": false,
+  "killStore": false,
+  "killTimeline": false,
+  "hookMethod": "registry"
+}
+```
+
+| Key | Default | Effect |
+|---|---:|---|
+| `rotationMode` | `onDemand` | `onDemand`, `perLogon`, or `timed`. Legacy `perBoot` is migrated to `perLogon` because the target values are in HKCU. |
+| `timedIntervalMin` | `30` | Rotation interval from 15 through 1440 minutes in `timed` mode. |
+| `blockCDP` | `true` | Disable `EnableCdp`, `CDPSvc`, the `CDPUserSvc` template, and current `CDPUserSvc_*` instances. Required for persistent local masking. |
+| `blockWpn` | `false` | Disable/stop `WpnService`, the `WpnUserService` template, and current `WpnUserService_*` instances. High collateral. |
+| `blockTelemetry` | `false` | Apply the diagnostic-data policy set below, run Group Policy refresh, and disable/stop `DiagTrack` and `dmwappushservice`. High collateral. |
+| `requestDiagnosticDataDelete` | `false` | One-shot request through `Clear-WindowsDiagnosticData -Force`; requires `blockTelemetry=true`. |
+| `blockHosts` | `true` | Add exact IPv4 and IPv6 HOSTS entries for `activity.windows.com`. |
+| `blockAADHost` | `false` | Also block `aad.cs.dds.microsoft.com`; may break Microsoft-account functionality. |
+| `blockDO` | `false` | Set `DODownloadMode=99`; does not disable `DoSvc` and is not GDID rotation. |
+| `killPhoneLink` | `false` | Set `EnableMmx=0`. |
+| `killOneDrive` | `false` | Set `DisableFileSyncNGSC=1`. |
+| `killStore` | `false` | Set `AutoDownload=2`. |
+| `killTimeline` | `false` | Set all three Activity History policies to `0`. |
+| `hookMethod` | `registry` | `registry` or `none`. The original AppInit/API-hook mode is unsupported and rejected. |
+
+Boolean values are parsed strictly. Strings such as `false`, `0`, `no`, and `off` become false; malformed values and unknown JSON keys are rejected rather than silently accepted.
+
+# Diagnostic-data implementation
+
+## Edition-aware `AllowTelemetry`
+
+The stable registry value is:
+
+```text
+HKLM\SOFTWARE\Policies\Microsoft\Windows\DataCollection
+    AllowTelemetry  REG_DWORD
+```
+
+Microsoft has changed the visible ADMX wording over time. It may appear as **Allow Telemetry** on older Windows/ADMX releases and as **Allow Diagnostic Data** on newer releases. The script reports the expected label and always manages the same registry value.
+
+The script selects the lowest value Microsoft documents as supported by the detected edition:
+
+| Edition family | Value | Reported level |
+|---|---:|---|
+| Windows 10/11 Enterprise | `0` | Diagnostic data off |
+| Windows 10/11 Education | `0` | Diagnostic data off |
+| Windows IoT Enterprise | `0` | Diagnostic data off |
+| Windows Server 2016+ | `0` | Diagnostic data off |
+| Windows 10/11 Pro | `1` | Required diagnostic data |
+| Other/unknown client editions | `1` | Conservative supported minimum |
+
+Writing `AllowTelemetry=0` on Pro does not produce a real “off” state; Windows treats it as `1`. This build therefore writes `1` on Pro and reports that fact instead of displaying a placebo `0`.
+
+## Managed telemetry policy values
+
+When `blockTelemetry=true`, the script applies each applicable value and verifies it again after `gpupdate /force`:
+
+```text
+HKLM\SOFTWARE\Policies\Microsoft\Windows\DataCollection
+```
+
+| Registry value | Desired value | Meaning in this build |
+|---|---:|---|
+| `AllowTelemetry` | `0` or `1` | Edition-aware minimum described above. |
+| `AllowDeviceNameInTelemetry` | `0` | Do not include the device name in Windows diagnostic data. |
+| `DisableEnterpriseAuthProxy` | `1` | Prevent `DiagTrack` from automatically using an authenticated proxy. This changes proxy behavior; it does not by itself reduce collection volume. |
+| `DisableOneSettingsDownloads` | `1` | Prevent Windows from connecting to OneSettings for dynamic configuration downloads. |
+| `DoNotShowFeedbackNotifications` | `1` | Suppress Windows feedback prompts. This does not itself disable diagnostic collection. |
+| `LimitDiagnosticLogCollection` | `1` | Prevent additional diagnostic-log collection when optional diagnostic data is enabled; defense-in-depth at level `0`/`1`. |
+| `LimitEnhancedDiagnosticDataWindowsAnalytics` | `0` | Disable the Desktop/Windows Analytics exception. |
+| `DisableDeviceDelete` | `0` | Keep the Settings Delete button and supported deletion path available. |
+| `DisableTelemetryOptInSettingsUx` | `1` | Disable the optional-diagnostic-data opt-in controls in client Settings. |
+
+### Important correction: `LimitEnhancedDiagnosticDataWindowsAnalytics`
+
+The requested phrase **Disable Windows Analytics collection** maps to value `0`, not `1`.
+
+```text
+LimitEnhancedDiagnosticDataWindowsAnalytics = 0   # Disabled
+LimitEnhancedDiagnosticDataWindowsAnalytics = 1   # Enabled exception
+```
+
+Value `1` enables the Desktop/Windows Analytics minimum-data exception when optional diagnostic data is selected. Setting it to `1` would contradict the requested disabled state. The script therefore writes `0`, reports the reason, and tests for `0`.
+
+## Settings-equivalent controls
+
+When `blockTelemetry=true`, the script also applies and reports the policy equivalents of the requested Settings changes.
+
+### Send optional diagnostic data
+
+Controlled by:
+
+```text
+HKLM\SOFTWARE\Policies\Microsoft\Windows\DataCollection\AllowTelemetry
+HKLM\SOFTWARE\Policies\Microsoft\Windows\DataCollection\DisableTelemetryOptInSettingsUx
+```
+
+The first forces the edition minimum; the second locks the Settings opt-in UI where applicable.
+
+### Tailored experiences
+
+```text
+HKCU\SOFTWARE\Policies\Microsoft\Windows\CloudContent
+    DisableTailoredExperiencesWithDiagnosticData = 1
+```
+
+### Improve inking and typing
+
+The build applies both the documented machine policy and current-user restrictions:
+
+```text
+HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\TextInput
+    AllowLinguisticDataCollection = 0
+
+HKCU\SOFTWARE\Microsoft\InputPersonalization
+    RestrictImplicitTextCollection = 1
+    RestrictImplicitInkCollection  = 1
+```
+
+### Delete diagnostic data
+
+The build keeps deletion available with:
+
+```text
+HKLM\SOFTWARE\Policies\Microsoft\Windows\DataCollection
+    DisableDeviceDelete = 0
+```
+
+A one-shot command request can then be enabled:
+
+```powershell
+.\gdid-tool.ps1 config blockTelemetry true
+.\gdid-tool.ps1 config requestDiagnosticDataDelete true
+.\gdid-tool.ps1 install
+```
+
+The script first applies and verifies the policies, then calls:
+
+```powershell
+Clear-WindowsDiagnosticData -Force
+```
+
+It tries the current PowerShell host and then the inbox Windows PowerShell 5.1 host. The request occurs **before** `DiagTrack` and `dmwappushservice` are stopped. The result is recorded in runtime status. On Windows clients, this workflow requires Windows 10 version 1809/build 17763 or newer.
+
+The request may be unavailable or ineffective when Windows diagnostic-data processor configuration is enabled; in that case deletion may need to be performed through the organization's administrative portal. The tool never reports server-side completion merely because the cmdlet returned successfully.
+
+## Group Policy refresh and verification
+
+After policy reconciliation, `install` and `uninstall` run:
+
+```text
+gpupdate.exe /force /wait:300
+```
+
+The process has a 330-second safety timeout. Nonzero exit status is treated as failure. Every non-CDP managed policy is then re-read: enabled/applicable options must match their desired value, while disabled or inapplicable options must match the protected baseline. If local, domain, or MDM policy overwrites a value, installation fails instead of reporting success. CDP policy is verified with the CDP service/template block later in the same transaction.
+
+The script writes policy registry values; it does not edit `Registry.pol`. Therefore Local Group Policy Editor may continue to show **Not Configured** even while the policy registry value is active. `status` reports the actual registry value and whether it matches the requested control.
+
+# Diagnostic-data service control
+
+When `blockTelemetry=true`, the script manages:
+
+```text
+Connected User Experiences and Telemetry      DiagTrack
+Device Management WAP Push message Routing    dmwappushservice
+```
+
+For each installed service it:
+
+1. captures the exact original `Start` and `DelayedAutoStart` values in protected state;
+2. records whether the service was running;
+3. sets the service startup type to Disabled;
+4. enforces `Start=4` directly on the existing service key;
+5. stops the service;
+6. re-reads live service and registry state; and
+7. fails if any present service is still running or not disabled.
+
+Turning `blockTelemetry` back off and running `install`, or running `uninstall`, restores the exact saved values. A service that was running at the original baseline is restarted when possible. Any failed restoration retains the protected backup for retry.
+
+`dmwappushservice` is important for Intune/MDM synchronization. `DiagTrack` is used by Endpoint Analytics and Windows Update for Business reporting. These services must not be disabled on systems that depend on those functions.
+
+# Windows Push Notification control
+
+When `blockWpn=true`, the script manages:
+
+- `WpnService`;
+- the `WpnUserService` per-user service template; and
+- all current `WpnUserService_*` instances.
+
+It backs up:
+
+```text
+HKLM\SYSTEM\CurrentControlSet\Services\WpnService\Start
+HKLM\SYSTEM\CurrentControlSet\Services\WpnService\DelayedAutoStart
+HKLM\SYSTEM\CurrentControlSet\Services\WpnUserService\Start
+HKLM\SYSTEM\CurrentControlSet\Services\WpnUserService\UserServiceFlags
+HKLM\SYSTEM\CurrentControlSet\Services\WpnUserService_*\Start
+```
+
+It disables the system service, sets the per-user template to `Start=4` and `UserServiceFlags=0`, disables current suffixed instances, stops them, and verifies the result. Restoration handles suffixes that disappeared or were created after the original snapshot without recreating stale per-user service keys.
+
+# CDP and local identity masking
+
+`blockCDP=true` disables:
+
+- `EnableCdp` policy;
+- `CDPSvc`;
+- the `CDPUserSvc` template; and
+- current `CDPUserSvc_*` instances.
+
+Only after these are verified disabled and stopped does the script replace existing current-user `LID`/`DeviceId` registry copies. It refuses to mask when:
+
+- no protected install state exists;
+- installation is incomplete;
+- CDP is active;
+- a current identity target lacks a protected backup; or
+- a current value differs from both the protected original and the last mask recorded by the tool.
+
+The write is transactional and verified. It remains a **local mask**, not a Device PUID or DeviceTicket change.
+
+# Reversible protected state
+
+The current protected-state schema is `6`. State is stored per user under:
+
+```text
+%ProgramData%\GDIDPrivacy\<user-SID>\state.json
+```
+
+The directory/file ACL is restricted so Administrators and SYSTEM can write while the intended user can read. Every state object and restoration target is validated against compiled descriptors before use. Paths read from JSON are never accepted as arbitrary write targets.
+
+The state includes:
+
+- original identity values;
+- every managed policy value and whether its key/value existed;
+- CDP/WPN/telemetry service `Start`, `DelayedAutoStart`, and template flags;
+- current CDP/WPN per-user instance startup values; and
+- which managed services were running.
+
+Schemas `3`, `4`, and `5` from earlier audited builds are migrated before telemetry changes. Newly managed telemetry targets are captured before modification. The state file is deleted only after verified restoration.
+
+# Status output
+
+`status` separately reports:
+
+- local identity copies;
+- Windows product, edition, build, and supported diagnostic-data minimum;
+- live CDP state;
+- live WPN state;
+- live `DiagTrack` and `dmwappushservice` state;
+- every managed policy's requested, applicable, desired, actual, active, and reconciled status;
+- Settings-equivalent summaries for optional diagnostic data, UI lock, tailored experiences, inking/typing, and data deletion;
+- the most recent deletion request result;
+- HOSTS entries;
+- scheduled-task state;
+- protected state/ACL/schema; and
+- an honest limitation assessment.
+
+A configured option is never treated as proof of successful application. Live values are checked.
+
+# Scheduled task security
+
+Automatic local masking uses a non-elevated current-user scheduled task. This avoids the original project's elevated task executing a user-writable script. The task is created only when:
+
+- `blockCDP=true`;
+- `hookMethod=registry`; and
+- `rotationMode` is `perLogon` or `timed`.
+
+Mutating commands are serialized with an exclusive per-user file lock that works across Windows sessions.
+
+# HOSTS behavior
+
+The script writes a marked block containing both IPv4 and IPv6 entries. It preserves the detected file encoding, modifies only its own block, verifies exact entries, restores a temporary backup on failure, rejects malformed/duplicate markers, and flushes DNS cache.
+
+HOSTS blocking is exact-name and best effort. It cannot prove endpoint completeness, and it does not cover applications that use other names or independent transports.
+
+# Validation and test plans
+
+Run the complete non-mutating, dual-engine gate first:
+
 ```cmd
-gdid-tool.bat status
-gdid-tool.bat rotate
+.\tests\Run-AllChecks.cmd
 ```
 
-### 2. Standalone `.exe`
-Two ways to get `gdid-tool.exe`:
+The gate invokes PowerShell's real parser for every `.ps1`, `.psm1`, and `.psd1`
+file under both Windows PowerShell 5.1 and PowerShell 7. It also contains a
+regression check for ambiguous expandable-string interpolation, verifies the
+SHA-256 manifest and package contract through a .NET SHA-256 implementation
+that does not depend on module auto-loading, optionally runs PSScriptAnalyzer
+when installed, and collects all results in one log. See [`TESTING.md`](TESTING.md).
 
-- **Download (recommended):** grab `gdid-tool.exe` from the [Releases](https://github.com/someguy0110/gdid-privacy/releases) page. Double-click it — it elevates and installs by default.
-- **Build it yourself:** run `build-exe.ps1` (requires Windows + PowerShell, run as Administrator). It uses [ps2exe](https://github.com/MScholtes/PS2EXE) to compile the script:
-  ```powershell
-  .\build-exe.ps1
-  ```
-  To produce a downloadable `.exe` on every release, point a GitHub Actions workflow at `.\build-exe.ps1`.
+Then use disposable VM snapshots and follow:
 
-> ⚠️ **Antivirus note:** `ps2exe` wrappers are sometimes flagged by AV because the same technique is abused by malware. The binary is safe and fully open-source (you can read `gdid-tool.ps1` yourself), but you may need to allow-list it. An unsigned `.exe` is more likely to be flagged than the `.ps1`.
+- [`tests/WPN_TEST_PLAN.md`](tests/WPN_TEST_PLAN.md)
+- [`tests/TELEMETRY_TEST_PLAN.md`](tests/TELEMETRY_TEST_PLAN.md)
 
-### 3. Runs automatically when your PC starts
-`install` creates a Windows **scheduled task** called **`GDIDRotator`** that fires **AtStartup** (and on the rotation timer). Verify it:
-```powershell
-.\gdid-tool.ps1 status        # "Scheduled Task: GDIDRotator: Ready"
-Get-ScheduledTask -TaskName "GDIDRotator"
-```
-To see it visually: `taskschd.msc` → Task Scheduler Library → **GDIDRotator**.
+The package's static audit is recorded in [`STATIC_AUDIT_RESULTS.md`](STATIC_AUDIT_RESULTS.md). A release is not syntax-validated until the dual-engine parser gate succeeds on Windows. Static analysis and read-only smoke tests do not replace a live Windows lifecycle test.
 
-Alternative (manual) startup method — the **Startup folder**:
-1. Press `Win+R`, type `shell:startup`, Enter
-2. Put a shortcut to `gdid-tool.bat` (or `gdid-tool.exe`) there
-3. It launches on every login — but run `install` once as Administrator first so the changes persist
+# What this build does not claim
 
-> The scheduled-task method (the default) is better: it runs elevated at boot without a login, and rotates the GDID on the timer you configured.
+It does not claim to:
 
----
+- rotate an arbitrary or server-issued Device PUID;
+- rewrite or forge a valid DeviceTicket;
+- erase Microsoft's server-side identity history;
+- make old and new identifiers unlinkable;
+- block every WNS-adjacent, Microsoft identity, telemetry, Store, Defender, WAM, browser, application, or update path;
+- provide safe system-wide API registry spoofing; or
+- make Windows fully functional while guaranteeing zero Microsoft egress.
 
-## 📖 Commands
+See [`AUDIT_REPORT.md`](AUDIT_REPORT.md) and [`REMOVED_FEATURES.md`](REMOVED_FEATURES.md).
 
-| Command | Description |
-|---------|-------------|
-| `status` | Show current GDID, service state, HOSTS blocks, feature kills |
-| `rotate` | Immediately generate and apply a new fake GDID |
-| `install` | Apply all protections per current config |
-| `uninstall` | Remove all changes, restore defaults |
-| `config` | Show full configuration |
-| `config <key>` | Show single config value |
-| `config <key> <val>` | Set a config value |
-| `help` | Print usage |
+# Build helper and launcher
 
----
+`gdid-tool.bat` elevates only `install` and `uninstall`; other commands run normally.
 
-## ⚙️ Configuration
+`build-exe.ps1` first requires the dual-engine validation gate to pass, then creates a visible-console wrapper through `ps2exe`. The EXE is not marked always-elevated. Keep `gdid-config.json` beside it.
 
-Edit `gdid-config.json` or use `.\gdid-tool.ps1 config <key> <value>`:
+# References
 
-### Rotation
+Primary Microsoft documentation used for this build includes:
 
-| Key | Values | Default | Description |
-|-----|--------|---------|-------------|
-| `rotationMode` | `perBoot` / `timed` / `onDemand` | `perBoot` | When to auto-rotate the GDID |
-| `timedIntervalMin` | number | `30` | Minutes between rotations (timed mode) |
+- Configure Windows diagnostic data in your organization
+- Policy CSP — System
+- Windows Privacy Compliance Guide
+- Windows per-user services guidance
+- Windows Push Notification Services overview
+- Windows service guidance and Intune/Endpoint Analytics requirements
+- `Clear-WindowsDiagnosticData` cmdlet documentation
 
-### Blocking
-
-| Key | Default | What it blocks |
-|-----|---------|----------------|
-| `blockHosts` | `true` | `aad.cs.dds.microsoft.com`, `activity.windows.com` via HOSTS file |
-
-### Feature Kill Switches
-
-Toggle these to disable specific Microsoft services that use or depend on the GDID ecosystem:
-
-| Key | Default | Disables |
-|-----|---------|----------|
-| `killPhoneLink` | `false` | Phone Link (Your Phone) app |
-| `killOneDrive` | `false` | OneDrive file sync |
-| `killStore` | `false` | Microsoft Store auto-updates |
-| `killTimeline` | `false` | Activity History / Timeline |
-| `blockCDP` | `true` | CDPSvc / CDPUserSvc entirely |
-
-### Advanced
-
-| Key | Values | Default | Description |
-|-----|--------|---------|-------------|
-| `hookMethod` | `registry` / `api` | `registry` | Spoof method — `registry` rewrites values, `api` uses DLL hooking |
-
-### Examples
-
-```powershell
-# Rotate every 15 minutes
-.\gdid-tool.ps1 config rotationMode timed
-.\gdid-tool.ps1 config timedIntervalMin 15
-
-# Kill Phone Link + disable CDP entirely
-.\gdid-tool.ps1 config killPhoneLink true
-.\gdid-tool.ps1 config blockCDP true
-
-# Apply changes
-.\gdid-tool.ps1 install
-```
-
----
-
-## 🎯 What Gets Blocked
-
-| Feature | Collateral Damage |
-|---------|-------------------|
-| `blockCDP` | Nearby Share, cross-device clipboard, "Continue on PC", any CDP-dependent apps |
-| `blockHosts` | None — name-based HOSTS blocking is targeted and has no side effects |
-| `killPhoneLink` | Your Phone / Phone Link app stops working |
-| `killOneDrive` | OneDrive won't sync files |
-| `killStore` | App updates require manual trigger in Settings |
-| `killTimeline` | Timeline history stops uploading |
-
----
-
-## 🔄 How Rotation Works
-
-1. **Generate** a random 64-bit hex string with the `0018` prefix (valid Device PUID namespace)
-2. **Back up** the original GDID on first run (stored in `gdid-config.json`)
-3. **Write** to both registry locations (`ExtendedProperties\LID` + `Token\{GUID}\DeviceId`)
-4. **Clear** `%LOCALAPPDATA%\ConnectedDevicesPlatform` (stale CDP state cache)
-5. **Disable CDP services** (the default) — prevents CDPSvc from restoring the real GDID from its DPAPI DeviceTicket. The spoofed value persists across reboots.
-6. **Block** the tracking endpoints via the HOSTS file (also ON by default)
-
-> Both `blockCDP` and `blockHosts` are ON by default — maximum protection out of the box. If you need Nearby Share or cross-device clipboard, set `blockCDP=false` and keep `blockHosts=true` for reliable name-based blocking.
-
----
-
-## 🧪 Verification
-
-```powershell
-# Check current GDID value
-(Get-ItemProperty 'HKCU:\SOFTWARE\Microsoft\IdentityCRL\ExtendedProperties').LID
-
-# Check CDP state cache
-Get-ChildItem "$env:LOCALAPPDATA\ConnectedDevicesPlatform"
-
-# Check service status
-Get-Service CDPSvc, CDPUserSvc | Format-Table Name, Status, StartType -AutoSize
-
-# Check HOSTS file
-gc C:\Windows\System32\drivers\etc\hosts | Select-String "GDID"
-```
-
----
-
-## 💻 For Developers: API Hook Mode (Advanced)
-
-An optional DLL hook using [MinHook](https://github.com/TsudaKageyu/minhook) that intercepts `RegQueryValueExW` at the Win32 API layer. Instead of modifying registry values, it returns a spoofed value on read — the real GDID stays untouched.
-
-```powershell
-# Build
-cd gdid-hook-dll
-msbuild gdid-hook.vcxproj /p:Configuration=Release /p:Platform=x64
-
-# Install via AppInit_DLLs
-# See gdid-hook-dll/README.md for instructions
-```
-
-> ⚠️ **Warning:** `AppInit_DLLs` is widely flagged by AV/EDR products. Most users should stick with the default registry rotation mode.
-
----
-
-## 🧠 Known Limitations
-
-### HOSTS file blocking
-The HOSTS file maps `aad.cs.dds.microsoft.com` and `activity.windows.com` to `0.0.0.0`. This is name-based and immune to the IP address rotation that breaks firewall approaches. No scheduled refresh needed.
-
-### CDP services are disabled by default
-`blockCDP=true` (the default) disables CDPSvc and CDPUserSvc. This means Nearby Share, cross-device clipboard, and "Continue on PC" will not work. If you need these features:
-```powershell
-.\gdid-tool.ps1 config blockCDP false
-.\gdid-tool.ps1 install
-```
-Without CDP disable, rotation becomes local-only — CDPSvc restores the real GDID from its DeviceTicket on restart. Keep `blockHosts=true` for reliable blocking in that case.
-
-### Why there's no IP-based firewall
-These endpoints use Azure Front Door shared frontends with DNS TTLs as low as **4 seconds**. A firewall rule created at one moment is stale before CDP ever connects. This approach is structurally broken and was removed — the two things that actually work (CDP disable + HOSTS blocking) are both ON by default.
-
-### Windows Updates
-After a major Windows update, re-run `.\\gdid-tool.ps1 install` to re-apply protections. This tool does not survive a clean Windows reinstall.
-
-### Scheduled task security
-The rotation task runs with `RunLevel Highest` from the script's install path. Keep the script in a directory writable only by administrators (e.g. `C:\\Program Files\\GDID`). The tool warns on install if it detects a user-writable path.
-
----
-
-## 📚 References
-
-- [gdid-reversal](https://github.com/SmtimesIWndr/gdid-reversal) — Complete reverse engineering writeup of the Windows GDID
-- *United States v. Peter Stokes*, N.D. Ill., July 2026 — The DOJ complaint that first named GDID publicly
-
----
-
-<div align="center">
-  <br/>
-  <sub>
-    Built for <strong>defensive privacy</strong> — you own your device,
-    you decide what it reports.
-  </sub>
-  <br/>
-  <br/>
-</div>
+The reverse-engineering claims that motivated the additional service controls come from `SmtimesIWndr/We-running-GDID-back`. Those observations are independent research, not Microsoft documentation. This build uses documented Windows controls where available and labels its remaining limits explicitly.
