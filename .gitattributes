@@ -1,6 +1,6 @@
-# Keep checksum-covered files byte-stable on every operating system.
+# Canonical line endings for repository text files.
 * text=auto eol=lf
 
-# Command Prompt launchers are intentionally stored and checked out as CRLF.
+# Windows Command Prompt launchers are checked out and archived as CRLF.
 *.bat text eol=crlf
 *.cmd text eol=crlf
