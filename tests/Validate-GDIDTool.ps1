@@ -71,7 +71,7 @@ function Get-Sha256Hex {
 $required = @(
     'gdid-tool.ps1','gdid-config.json','README.md','AUDIT_REPORT.md',
     'REMOVED_FEATURES.md','STATIC_AUDIT_RESULTS.md','TESTING.md',
-    'SHA256SUMS.txt','PSScriptAnalyzerSettings.psd1','build-exe.ps1',
+    'SHA256SUMS.txt','.gitattributes','PSScriptAnalyzerSettings.psd1','build-exe.ps1',
     'gdid-tool.bat','tests\WPN_TEST_PLAN.md','tests\TELEMETRY_TEST_PLAN.md',
     'tests\Validate-GDIDTool.ps1','tests\Parse-AllPowerShell.ps1',
     'tests\Run-AllChecks.ps1','tests\Run-AllChecks.cmd',
@@ -155,6 +155,8 @@ if (-not (Test-Path -LiteralPath $mainPath)) { throw 'Main script is missing.' }
 $main = Get-Content -LiteralPath $mainPath -Raw
 $readme = Get-Content -LiteralPath (Join-Path $root 'README.md') -Raw
 $audit = Get-Content -LiteralPath (Join-Path $root 'AUDIT_REPORT.md') -Raw
+$gitAttributes = Get-Content -LiteralPath (Join-Path $root '.gitattributes') -Raw
+$workflow = Get-Content -LiteralPath (Join-Path $root '.github\workflows\powershell-validation.yml') -Raw
 $mainAst = $asts[$mainPath]
 if ($null -ne $mainAst) {
     $funcs = @($mainAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] },$true))
@@ -164,11 +166,23 @@ if ($null -ne $mainAst) {
 }
 
 Require-Match $main ([ordered]@{
-    'tool version' = '(?m)^\s*\$script:ToolVersion\s*=\s*''3\.7\.2-audited-telemetry''\s*$'
+    'tool version' = '(?m)^\s*\$script:ToolVersion\s*=\s*''3\.7\.3-audited-telemetry''\s*$'
     'config schema 5' = '(?m)^\s*\$script:CurrentConfigSchema\s*=\s*5\s*$'
     'state schema 6' = '(?m)^\s*\$script:CurrentStateSchema\s*=\s*6\s*$'
     'state migration' = '(?m)^function\s+Upgrade-StateToCurrentSchema\b'
 }) 'Version/schema'
+
+Require-Match $gitAttributes ([ordered]@{
+    'default LF checkout rule' = '(?m)^\*\s+text=auto\s+eol=lf\s*$'
+    'BAT exact-byte rule' = '(?m)^\*\.bat\s+-text\s*$'
+    'CMD exact-byte rule' = '(?m)^\*\.cmd\s+-text\s*$'
+}) 'Git line-ending policy'
+
+Require-Match $workflow ([ordered]@{
+    'autocrlf disabled before checkout' = '(?s)git config --global core\.autocrlf false.*uses:\s*actions/checkout@'
+    'checkout action pinned to a commit' = '(?m)^\s*uses:\s*actions/checkout@[0-9a-f]{40}\s*(?:#.*)?$'
+    'checkout EOL diagnostics' = 'git ls-files --eol'
+}) 'GitHub Actions checkout-byte policy'
 
 Require-Match $main ([ordered]@{
     'blockTelemetry default off' = '(?m)^\s*blockTelemetry\s*=\s*\$false\b'
