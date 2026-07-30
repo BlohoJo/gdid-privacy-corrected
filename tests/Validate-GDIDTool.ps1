@@ -174,8 +174,8 @@ Require-Match $main ([ordered]@{
 
 Require-Match $gitAttributes ([ordered]@{
     'default LF checkout rule' = '(?m)^\*\s+text=auto\s+eol=lf\s*$'
-    'BAT exact-byte rule' = '(?m)^\*\.bat\s+-text\s*$'
-    'CMD exact-byte rule' = '(?m)^\*\.cmd\s+-text\s*$'
+    'BAT forced-CRLF rule' = '(?m)^\*\.bat\s+text\s+eol=crlf\s*$'
+    'CMD forced-CRLF rule' = '(?m)^\*\.cmd\s+text\s+eol=crlf\s*$'
 }) 'Git line-ending policy'
 
 Require-Match $workflow ([ordered]@{
