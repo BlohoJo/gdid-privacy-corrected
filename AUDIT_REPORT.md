@@ -1,8 +1,8 @@
-# Audit Report — GDID Privacy Tool 3.7.2, Telemetry/WPN Build
+# Audit Report — GDID Privacy Tool 3.7.3, Telemetry/WPN Build
 
 ## Scope
 
-This report covers the supplied `gdid-tool.ps1`, its original `README.md`, Issue #12, the complete archive, and the successive audited corrections through tool version `3.7.2-audited-telemetry`.
+This report covers the supplied `gdid-tool.ps1`, its original `README.md`, Issue #12, the complete archive, and the successive audited corrections through tool version `3.7.3-audited-telemetry`.
 
 The current build is intentionally narrower than the original project. It provides reversible local Windows hardening and truthful reporting. It does **not** represent local registry masking as rotation of Microsoft's authoritative Device PUID.
 
@@ -24,7 +24,7 @@ The audited build removes or rejects those unsupported mechanisms and adds verif
 
 These controls reduce selected local reporting paths. They do not prove that every Microsoft component or application has stopped communicating, and they do not alter Microsoft's server-side identity record.
 
-## Issue someguy0110/gdid-privacy#12 disposition
+## Issue #12 disposition
 
 | Issue | Current disposition |
 |---|---|
@@ -163,6 +163,21 @@ read-only and computes SHA-256 through
 a future revision removes the portable helper or reintroduces the external
 file-hash cmdlet. This makes checksum verification independent of
 `Microsoft.PowerShell.Utility` discovery and command auto-loading.
+
+## GitHub checkout line-ending correction in 3.7.3
+
+The release manifest hashes exact file bytes. Most project files are stored with
+LF endings, while the `.bat` and `.cmd` launchers intentionally use CRLF. A
+Windows GitHub-hosted runner can have `core.autocrlf=true`; without an explicit
+repository policy, checkout rewrites LF payloads to CRLF before the validator
+runs, causing widespread checksum failures even though GitHub's source archive
+matches the manifest.
+
+Version 3.7.3 adds `.gitattributes` rules that enforce LF for ordinary text and
+preserve the batch launchers as exact CRLF files. The workflow also sets
+`core.autocrlf=false` before `actions/checkout` and reports
+`git ls-files --eol`. The validator requires the line-ending policy and includes
+`.gitattributes` in the manifest coverage contract.
 
 ## Additional defects corrected during the audit
 
