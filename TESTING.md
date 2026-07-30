@@ -43,6 +43,31 @@ problems. Manifest verification instead uses
 `System.Security.Cryptography.SHA256` and `System.IO.File` directly, which are
 available to both supported engines without importing a PowerShell module.
 
+## GitHub Actions and byte-stable line endings
+
+`SHA256SUMS.txt` verifies the exact bytes of the checked-out files. Git for
+Windows commonly enables `core.autocrlf`, which can rewrite LF files to CRLF in
+a Windows working tree and invalidate otherwise correct hashes. This repository
+prevents that in two layers:
+
+1. `.gitattributes` enforces LF for normal text while keeping `.bat` and `.cmd`
+   launchers as exact CRLF files.
+2. The GitHub Actions workflow sets `core.autocrlf=false` before
+   `actions/checkout` and prints `git ls-files --eol` for diagnostics.
+
+After first adding or changing `.gitattributes` in an existing clone, normalize
+the index once and inspect the result before committing:
+
+```powershell
+git add .gitattributes
+git add --renormalize .
+git status
+```
+
+Do not make the validator silently normalize content before hashing. The
+manifest is intended to detect any byte change, including an unintended line-
+ending rewrite.
+
 ## Parser-only check
 
 To collect all parser errors without running the main script:
