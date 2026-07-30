@@ -5,12 +5,25 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   validate:
     runs-on: windows-2022
     steps:
+      - name: Disable Git line-ending conversion before checkout
+        shell: pwsh
+        run: git config --global core.autocrlf false
+
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Report checkout line-ending state
+        shell: pwsh
+        run: |
+          Write-Host "core.autocrlf=$(git config --global --get core.autocrlf)"
+          git ls-files --eol
 
       - name: Install PSScriptAnalyzer for Windows PowerShell
         shell: powershell
