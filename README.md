@@ -1,4 +1,4 @@
-# GDID Privacy Tool — Audited Telemetry/WPN Build 3.7.2
+# GDID Privacy Tool — Audited Telemetry/WPN Build 3.7.3
 
 This package is a corrected and deliberately narrower revision of the original **gdid-privacy** project. It focuses on system changes that can be applied, verified, and restored locally.
 
@@ -423,7 +423,11 @@ file under both Windows PowerShell 5.1 and PowerShell 7. It also contains a
 regression check for ambiguous expandable-string interpolation, verifies the
 SHA-256 manifest and package contract through a .NET SHA-256 implementation
 that does not depend on module auto-loading, optionally runs PSScriptAnalyzer
-when installed, and collects all results in one log. See [`TESTING.md`](TESTING.md).
+when installed, and collects all results in one log. The repository also ships a
+`.gitattributes` policy that keeps normal text files at LF and preserves the two
+Command Prompt launchers as CRLF, so byte-for-byte checksums remain stable on
+Windows, Linux, GitHub source archives, and GitHub Actions checkouts. See
+[`TESTING.md`](TESTING.md).
 
 Then use disposable VM snapshots and follow:
 
