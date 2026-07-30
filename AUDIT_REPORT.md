@@ -24,7 +24,7 @@ The audited build removes or rejects those unsupported mechanisms and adds verif
 
 These controls reduce selected local reporting paths. They do not prove that every Microsoft component or application has stopped communicating, and they do not alter Microsoft's server-side identity record.
 
-## Issue #12 disposition
+## someguy0110/gdid-privacy#12 disposition
 
 | Issue | Current disposition |
 |---|---|
