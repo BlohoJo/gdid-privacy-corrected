@@ -164,20 +164,23 @@ a future revision removes the portable helper or reintroduces the external
 file-hash cmdlet. This makes checksum verification independent of
 `Microsoft.PowerShell.Utility` discovery and command auto-loading.
 
-## GitHub checkout line-ending correction in 3.7.3
+## GitHub checkout and source-archive line-ending correction in 3.7.3
 
-The release manifest hashes exact file bytes. Most project files are stored with
-LF endings, while the `.bat` and `.cmd` launchers intentionally use CRLF. A
-Windows GitHub-hosted runner can have `core.autocrlf=true`; without an explicit
-repository policy, checkout rewrites LF payloads to CRLF before the validator
-runs, causing widespread checksum failures even though GitHub's source archive
-matches the manifest.
+The release manifest hashes the exact bytes produced in a checkout or source
+archive. Ordinary text uses `* text=auto eol=lf`. Windows Command Prompt
+launchers use `*.bat text eol=crlf` and `*.cmd text eol=crlf`.
 
-Version 3.7.3 adds `.gitattributes` rules that enforce LF for ordinary text and
-preserve the batch launchers as exact CRLF files. The workflow also sets
-`core.autocrlf=false` before `actions/checkout` and reports
-`git ls-files --eol`. The validator requires the line-ending policy and includes
-`.gitattributes` in the manifest coverage contract.
+These BAT/CMD rules do not preserve an arbitrary committed byte sequence. Git
+normalizes the files as text in the repository/index, then materializes or
+exports them with CRLF endings. The earlier `-text` form disabled conversion and
+therefore preserved whichever endings happened to be committed; it could not
+guarantee CRLF in a GitHub source ZIP.
+
+The workflow also sets `core.autocrlf=false` before `actions/checkout` and
+reports `git ls-files --eol`. The validator requires the explicit forced-CRLF
+rules and includes `.gitattributes` in the manifest coverage contract. Expected
+diagnostics are `i/lf w/crlf attr/text eol=crlf` for BAT/CMD and
+`i/lf w/lf attr/text=auto eol=lf` for ordinary text.
 
 ## Additional defects corrected during the audit
 
