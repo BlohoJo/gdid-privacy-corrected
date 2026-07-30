@@ -14,5 +14,5 @@ dffafa2cea8ce6d5f9fad87ff50af9840fd1afe2a46addf63779644524e52231  ./STATIC_AUDIT
 9b16d0f19e1ca8d3e627364f494c46c364ac49051ec6472bfde924427601af0e  ./tests/Run-AllChecks.cmd
 a35765d3edce3df9f19bee638e64d0fa0b79d1656bd202c56516cfb15d70caf4  ./tests/Run-AllChecks.ps1
 c3be5f7cebd4c92dc0f9b4f8018371e36764a1751a1226c89a75cb9ea55275de  ./tests/TELEMETRY_TEST_PLAN.md
-1ef4d841f6a6a00b25d75f67d063a0e006bb1875dd397e9b04cffe1ba9848449  ./tests/Validate-GDIDTool.ps1
+3f3790efd7faed53be8d8b8f78a5105f70e7947230b8e849bbc4729b866ce798  ./tests/Validate-GDIDTool.ps1
 9ca64185cfb7640742c9a3de300ce18e3fff586929a4f2c42ade11cdc0195cab  ./tests/WPN_TEST_PLAN.md
