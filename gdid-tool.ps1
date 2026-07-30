@@ -63,7 +63,7 @@ $ErrorActionPreference = 'Stop'
 # Constants and configuration schema
 # -----------------------------------------------------------------------------
 
-$script:ToolVersion = '3.7.2-audited-telemetry'
+$script:ToolVersion = '3.7.3-audited-telemetry'
 $script:CurrentConfigSchema = 5
 $script:CurrentStateSchema = 6
 
