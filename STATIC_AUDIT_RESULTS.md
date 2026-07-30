@@ -13,8 +13,10 @@ occurrences remain braced, and the package includes a dedicated regression
 gate for that error class. Version 3.7.2 also replaces the checksum validator's
 module-dependent file-hash command with a direct .NET SHA-256 implementation.
 Version 3.7.3 adds a repository line-ending contract and configures GitHub
-Actions before checkout, preventing Windows `core.autocrlf` from changing the
-bytes covered by `SHA256SUMS.txt`.
+Actions before checkout. Ordinary text is exported as LF, while `.bat` and
+`.cmd` launchers are declared `text eol=crlf` and exported as CRLF, preventing
+checkout/archive conversion from changing the bytes covered by
+`SHA256SUMS.txt`.
 
 ## Checks completed in this Linux analysis environment
 
@@ -33,7 +35,7 @@ bytes covered by `SHA256SUMS.txt`.
 | Removed IP-firewall/AppInit/cache-restart constructs | Absent |
 | Configuration/documentation consistency | Pass |
 | Portable .NET SHA-256 validator; no file-hash cmdlet dependency | Present |
-| Byte-stable `.gitattributes` and pre-checkout CI configuration | Present |
+| Explicit LF/forced-CRLF `.gitattributes` policy and pre-checkout CI configuration | Present |
 | Clean archive and SHA-256 manifest | Generated during packaging |
 
 ## Mandatory Windows validation not executable here
