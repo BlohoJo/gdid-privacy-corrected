@@ -45,15 +45,21 @@ available to both supported engines without importing a PowerShell module.
 
 ## GitHub Actions and byte-stable line endings
 
-`SHA256SUMS.txt` verifies the exact bytes of the checked-out files. Git for
-Windows commonly enables `core.autocrlf`, which can rewrite LF files to CRLF in
-a Windows working tree and invalidate otherwise correct hashes. This repository
-prevents that in two layers:
+`SHA256SUMS.txt` verifies the exact bytes produced in a checkout or source
+archive. Git for Windows commonly enables `core.autocrlf`, which can rewrite
+line endings and invalidate otherwise correct hashes. This repository prevents
+that in two layers:
 
-1. `.gitattributes` enforces LF for normal text while keeping `.bat` and `.cmd`
-   launchers as exact CRLF files.
+1. `.gitattributes` uses `* text=auto eol=lf` for ordinary text and explicitly
+   uses `*.bat text eol=crlf` plus `*.cmd text eol=crlf` for Command Prompt
+   launchers. Git normalizes these files as text in the repository/index, then
+   writes or exports BAT/CMD files with CRLF endings.
 2. The GitHub Actions workflow sets `core.autocrlf=false` before
    `actions/checkout` and prints `git ls-files --eol` for diagnostics.
+
+Do not use `*.bat -text` or `*.cmd -text` for this purpose. `-text` disables
+conversion and preserves whichever line endings entered the repository; it does
+not force CRLF in checkouts or GitHub source archives.
 
 After first adding or changing `.gitattributes` in an existing clone, normalize
 the index once and inspect the result before committing:
@@ -62,11 +68,23 @@ the index once and inspect the result before committing:
 git add .gitattributes
 git add --renormalize .
 git status
+git ls-files --eol -- gdid-tool.bat tests/Run-AllChecks.cmd
 ```
 
+Expected launcher diagnostics are:
+
+```text
+i/lf    w/crlf  attr/text eol=crlf    gdid-tool.bat
+i/lf    w/crlf  attr/text eol=crlf    tests/Run-AllChecks.cmd
+```
+
+`i/lf` is expected: Git stores normalized text internally. `w/crlf` confirms
+that the working-tree files are Windows CRLF, and `git archive` applies the same
+`eol=crlf` export conversion used by GitHub source archives.
+
 Do not make the validator silently normalize content before hashing. The
-manifest is intended to detect any byte change, including an unintended line-
-ending rewrite.
+manifest is intended to detect any byte change, including an unintended
+line-ending rewrite.
 
 ## Parser-only check
 
