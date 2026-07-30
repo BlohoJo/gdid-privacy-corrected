@@ -424,10 +424,11 @@ regression check for ambiguous expandable-string interpolation, verifies the
 SHA-256 manifest and package contract through a .NET SHA-256 implementation
 that does not depend on module auto-loading, optionally runs PSScriptAnalyzer
 when installed, and collects all results in one log. The repository also ships a
-`.gitattributes` policy that keeps normal text files at LF and preserves the two
-Command Prompt launchers as CRLF, so byte-for-byte checksums remain stable on
-Windows, Linux, GitHub source archives, and GitHub Actions checkouts. See
-[`TESTING.md`](TESTING.md).
+`.gitattributes` policy that normalizes ordinary text to LF and declares the
+`.bat` and `.cmd` launchers as `text eol=crlf`. Git stores normalized text in the
+repository/index and writes or exports the Command Prompt launchers with CRLF,
+so byte-for-byte checksums remain consistent across Windows and Linux checkouts,
+GitHub source archives, and GitHub Actions. See [`TESTING.md`](TESTING.md).
 
 Then use disposable VM snapshots and follow:
 
