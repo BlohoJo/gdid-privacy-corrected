@@ -1,8 +1,8 @@
 # Static Audit Results
 
-Audit date: **2026-07-28**
+Audit date: **2026-07-30**
 
-Target package: **GDID Privacy Tool 3.7.2-audited-telemetry**
+Target package: **GDID Privacy Tool 3.7.3-audited-telemetry**
 
 ## Regression fixed
 
@@ -12,6 +12,9 @@ and PowerShell 7 rejected the script before execution. All eight known
 occurrences remain braced, and the package includes a dedicated regression
 gate for that error class. Version 3.7.2 also replaces the checksum validator's
 module-dependent file-hash command with a direct .NET SHA-256 implementation.
+Version 3.7.3 adds a repository line-ending contract and configures GitHub
+Actions before checkout, preventing Windows `core.autocrlf` from changing the
+bytes covered by `SHA256SUMS.txt`.
 
 ## Checks completed in this Linux analysis environment
 
@@ -30,6 +33,7 @@ module-dependent file-hash command with a direct .NET SHA-256 implementation.
 | Removed IP-firewall/AppInit/cache-restart constructs | Absent |
 | Configuration/documentation consistency | Pass |
 | Portable .NET SHA-256 validator; no file-hash cmdlet dependency | Present |
+| Byte-stable `.gitattributes` and pre-checkout CI configuration | Present |
 | Clean archive and SHA-256 manifest | Generated during packaging |
 
 ## Mandatory Windows validation not executable here
