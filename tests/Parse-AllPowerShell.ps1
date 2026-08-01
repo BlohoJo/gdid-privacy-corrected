@@ -16,6 +16,7 @@ $files = @(Get-ChildItem -LiteralPath $resolvedRoot -Recurse -File | Where-Objec
 
 $parseErrors = New-Object 'System.Collections.Generic.List[string]'
 $unsafeInterpolations = New-Object 'System.Collections.Generic.List[string]'
+$validatorRegexLiteralHazards = New-Object 'System.Collections.Generic.List[string]'
 [char[]]$trimChars = @([char]'\', [char]'/')
 
 Write-Host ("Engine: {0} {1} (64-bit={2})" -f
@@ -66,15 +67,40 @@ foreach ($file in $files) {
             $unsafeInterpolations.Add($message)
             Write-Host "[INTERPOLATION ERROR] $message" -ForegroundColor Red
         }
+
+        # Validator regexes often need to match literal PowerShell variables.
+        # A backslash does not escape '$' in an expandable PowerShell string,
+        # so catch that validator-specific error before executing the validator.
+        if ($file.Name -eq 'Validate-GDIDTool.ps1') {
+            $literalDollarMatches = [regex]::Matches(
+                [string]$token.Text,
+                '\\\$[A-Za-z_][A-Za-z0-9_]*'
+            )
+            foreach ($match in $literalDollarMatches) {
+                $message = "{0}:{1}:{2}: validator regex literal uses backslash-dollar in an expandable string: '{3}'" -f
+                    $relative,
+                    $token.Extent.StartLineNumber,
+                    $token.Extent.StartColumnNumber,
+                    $match.Value
+                $validatorRegexLiteralHazards.Add($message)
+                Write-Host "[VALIDATOR LITERAL ERROR] $message" -ForegroundColor Red
+            }
+        }
     }
 }
 
-if ($parseErrors.Count -gt 0 -or $unsafeInterpolations.Count -gt 0) {
-    Write-Host ("FAILED: parser errors={0}; unsafe interpolations={1}" -f
+if (
+    $parseErrors.Count -gt 0 -or
+    $unsafeInterpolations.Count -gt 0 -or
+    $validatorRegexLiteralHazards.Count -gt 0
+) {
+    Write-Host ("FAILED: parser errors={0}; unsafe variable-colon interpolations={1}; validator regex-literal interpolations={2}" -f
         $parseErrors.Count,
-        $unsafeInterpolations.Count) -ForegroundColor Red
+        $unsafeInterpolations.Count,
+        $validatorRegexLiteralHazards.Count) -ForegroundColor Red
     exit 1
 }
 
-Write-Host "PASS: all $($files.Count) PowerShell files parsed cleanly and no unsafe variable-colon interpolation was found." -ForegroundColor Green
+Write-Host ("PASS: all {0} PowerShell files parsed cleanly; no unsafe variable-colon or validator regex-literal interpolation was found." -f
+    $files.Count) -ForegroundColor Green
 exit 0
