@@ -4,7 +4,7 @@
 
 Removed. The original implementation contained collection, parameter-binding, error-handling, and sinkhole defects. More importantly, rapidly changing shared frontend addresses made periodic IP rules structurally unreliable and potentially disruptive to unrelated Microsoft services.
 
-The audited build retains only explicit exact-name HOSTS entries. Those entries are best effort and are not represented as endpoint-complete.
+The audited build retains only explicit exact-name HOSTS entries, grouped by DDS/CDP, Activity, WNS/notify, AAD/DDS, and validated user additions. Those entries are best effort and are not represented as endpoint-complete.
 
 ## API/AppInit registry hook
 
