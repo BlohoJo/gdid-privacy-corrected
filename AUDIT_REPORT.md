@@ -1,8 +1,8 @@
-# Audit Report — GDID Privacy Tool 3.7.3, Telemetry/WPN Build
+# Audit Report — GDID Privacy Tool 3.8.1, HOSTS/Telemetry/WPN Build
 
 ## Scope
 
-This report covers the supplied `gdid-tool.ps1`, its original `README.md`, Issue #12, the complete archive, and the successive audited corrections through tool version `3.7.3-audited-telemetry`.
+This report covers the supplied `gdid-tool.ps1`, its original `README.md`, Issue #12, the complete archive, and the successive audited corrections through tool version `3.8.1-audited-hosts`.
 
 The current build is intentionally narrower than the original project. It provides reversible local Windows hardening and truthful reporting. It does **not** represent local registry masking as rotation of Microsoft's authoritative Device PUID.
 
@@ -19,12 +19,12 @@ The audited build removes or rejects those unsupported mechanisms and adds verif
 - edition-aware Windows diagnostic-data policies;
 - selected Settings-equivalent privacy policies;
 - a one-shot supported diagnostic-data deletion request;
-- selected feature policies and exact-name HOSTS entries; and
+- selected feature policies and grouped, exact-name HOSTS entries with a validated extension list; and
 - local masking of existing current-user identifier registry copies only after CDP is verified disabled.
 
 These controls reduce selected local reporting paths. They do not prove that every Microsoft component or application has stopped communicating, and they do not alter Microsoft's server-side identity record.
 
-## Issue #12 disposition
+## [Issue #12](https://github.com/someguy0110/gdid-privacy/issues/12) disposition
 
 | Issue | Current disposition |
 |---|---|
@@ -32,7 +32,7 @@ These controls reduce selected local reporting paths. They do not prove that eve
 | Comma-joined `RemoteAddress` | Removed with the entire IP-firewall feature. |
 | Failed firewall creation reported as success | Removed with the entire IP-firewall feature. |
 | Sinkholed results turned into firewall rules | Removed with the entire IP-firewall feature. |
-| Dead/inappropriate domain list | Removed from IP-firewall logic; HOSTS entries are explicit and narrowly scoped. |
+| Dead/inappropriate domain list | Removed from IP-firewall logic. HOSTS names are explicit, grouped, configurable, and not filtered merely because a name is currently NXDOMAIN. |
 | IP rules ineffective against short TTLs | Fixed by removing the feature rather than retaining false protection. |
 | CDP restores locally spoofed value | Addressed operationally: masking is refused unless CDP is disabled and stopped. This still does not change the authoritative ticket. |
 | DeviceTicket retains the real PUID | Not claimed as fixed; the build documents this design limit. |
@@ -177,10 +177,68 @@ therefore preserved whichever endings happened to be committed; it could not
 guarantee CRLF in a GitHub source ZIP.
 
 The workflow also sets `core.autocrlf=false` before `actions/checkout` and
-reports `git ls-files --eol`. The validator requires the explicit forced-CRLF
-rules and includes `.gitattributes` in the manifest coverage contract. Expected
+reports `git ls-files --eol`. The workflow also builds a `git archive` ZIP and
+validates the manifest against the exported bytes. The validator requires the
+explicit forced-CRLF rules and includes `.gitattributes` in the manifest
+coverage contract. Expected
 diagnostics are `i/lf w/crlf attr/text eol=crlf` for BAT/CMD and
 `i/lf w/lf attr/text=auto eol=lf` for ordinary text.
+
+## Grouped HOSTS expansion in 3.8.0
+
+The referenced `SmtimesIWndr/GDID-Disabler` script contains 16 exact names and
+labels them broadly as DDS, Activity, and WNS/notify endpoints. The previous
+audited build managed only `activity.windows.com` plus the optional
+`aad.cs.dds.microsoft.com` name.
+
+Version 3.8.0 keeps `blockHosts` as the master switch and adds separate controls
+for the distinct collateral domains:
+
+- `blockDDSHosts` — five DDS/CDP names, excluding AAD;
+- `blockActivityHosts` — four Activity/Project Rome names;
+- `blockWnsHosts` — six WNS/notify names;
+- `blockAADHost` — the separately controlled `aad.cs.dds.microsoft.com`; and
+- `additionalHostDomains` — validated user-supplied exact FQDNs for future
+  discoveries.
+
+A fresh schema-6 configuration enables the DDS and Activity groups and leaves
+WNS and AAD off. That is deliberate: Microsoft documents that loss of WNS
+connectivity can stop push notifications and affect MDM management, mail
+synchronization, and settings synchronization. The AAD/DDS name also remains an
+explicit high-collateral opt-in rather than being silently folded into DDS.
+Enabling all four built-in switches blocks all 16 names from the referenced
+research script.
+
+Existing schema-5-or-earlier configurations are migrated conservatively in
+memory. Their historical `blockHosts` setting continues to select the Activity
+group, any existing `blockAADHost` choice is retained, and the newly introduced
+DDS and WNS groups remain off until the user sets them. The historical `blockDDS` key is still not migrated because it
+controlled the removed IP-firewall feature rather than exact-name HOSTS rules.
+
+The managed block is now verified as an exact set. Status and installation
+detect missing IPv4/IPv6 pairs, unexpected names left after a configuration
+change, duplicate entries, and malformed managed lines. Current DNS resolution
+is not a prerequisite: configured names are written even when they are
+temporarily NXDOMAIN. This anticipates future DNS changes but does not prove the
+name is used or that the list is endpoint-complete.
+
+
+## Package-validator regex-literal correction in 3.8.1
+
+The first 3.8.0 validation run passed PowerShell parsing and the main-script
+`help` and `config` smoke tests under both Windows PowerShell 5.1 and PowerShell
+7, but the package validator stopped while constructing its grouped-HOSTS regex
+table. Five patterns were written as double-quoted strings containing `\$...`.
+In PowerShell, backslash does not escape a dollar sign, so one pattern attempted
+to read an undefined `$config` variable under StrictMode; four neighboring
+patterns also expanded `$true` or `$false` instead of preserving those tokens
+for regex matching.
+
+Version 3.8.1 converts all five patterns to single-quoted PowerShell literals and
+adds two regression layers: the independent parser worker rejects validator
+expandable strings containing backslash-dollar variable references before the
+validator executes, and the validator repeats the check against its own AST. The main tool's
+functional behavior is unchanged from 3.8.0; this is a release-gate correction.
 
 ## Additional defects corrected during the audit
 
@@ -193,7 +251,7 @@ diagnostics are `i/lf w/crlf attr/text eol=crlf` for BAT/CMD and
 - local identity writes and restoration are transactional and conflict-aware;
 - state and runtime JSON writes are atomic;
 - service state is checked live rather than inferred from configuration;
-- HOSTS edits preserve encoding, use exact markers, include IPv4/IPv6, verify, and roll back on failure;
+- HOSTS edits preserve encoding, use exact markers, include IPv4/IPv6, verify the exact requested set, and roll back on failure;
 - compiled-EXE and script path resolution are handled separately; and
 - unsupported API/AppInit hook mode is rejected rather than advertised.
 
@@ -206,6 +264,7 @@ diagnostics are `i/lf w/crlf attr/text eol=crlf` for BAT/CMD and
 | Disable/stop named WPN services and current instances | Effective when live verification succeeds; high collateral. |
 | Apply edition-aware diagnostic policy minimum | Effective for local registry policy when not overridden by a higher authority. |
 | Disable/stop `DiagTrack` and `dmwappushservice` | Effective when live verification succeeds; management collateral applies. |
+| Install the configured exact-name HOSTS set | Effective for normal resolver lookups of those exact names when exact-set verification succeeds; not wildcard or endpoint-complete. |
 | Turn off tailored experiences and inking/typing collection by policy | Effective for the managed user/device scope where the policies are supported. |
 | Request deletion of uploaded Windows diagnostic data | Can submit the supported request; cannot prove server completion. |
 | Rotate Microsoft-issued Device PUID | Not implemented or claimed. |
@@ -221,7 +280,7 @@ The package was checked in this environment for:
 - balanced lexical delimiters and terminated strings/comments;
 - absence of all eight known ambiguous variable-plus-colon interpolations;
 - duplicate function names;
-- required telemetry/WPN/CDP implementation markers;
+- required telemetry/WPN/CDP and grouped-HOSTS implementation markers;
 - required version/schema markers;
 - prohibited legacy firewall/AppInit/cache-restart constructs;
 - control characters and trailing whitespace;
@@ -233,6 +292,6 @@ The exact output is in `STATIC_AUDIT_RESULTS.md`.
 
 ## Testing limitation
 
-This analysis environment is not Windows and has no Windows registry, Service Control Manager, Task Scheduler, Group Policy engine, Windows PowerShell 5.1, or PowerShell 7 runtime. No live service/policy mutation or real PowerShell parser execution was performed here. The packaged dual-engine gate uses PowerShell's official parser without executing mutating commands, and the WPN/telemetry test plans specify disposable-VM lifecycle tests.
+This analysis environment is not Windows and has no Windows registry, Service Control Manager, Task Scheduler, Group Policy engine, Windows PowerShell 5.1, or PowerShell 7 runtime. No live service/policy mutation or real PowerShell parser execution was performed here. The packaged dual-engine gate uses PowerShell's official parser without executing mutating commands, and the HOSTS/WPN/telemetry test plans specify disposable-VM lifecycle tests.
 
 A build should not be accepted for production—or described as parser-validated—until `tests\Run-AllChecks.cmd` exits successfully on Windows. It should not be accepted solely because static checks pass. At minimum, test install, status, reboot/sign-in, disable/reconcile, and uninstall on each target Windows edition—especially Windows 10 Pro, Windows 10 Enterprise, Windows 11 Pro, Windows 11 Enterprise, and the intended Server release.
