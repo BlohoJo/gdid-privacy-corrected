@@ -72,7 +72,8 @@ $required = @(
     'gdid-tool.ps1','gdid-config.json','README.md','AUDIT_REPORT.md',
     'REMOVED_FEATURES.md','STATIC_AUDIT_RESULTS.md','TESTING.md',
     'SHA256SUMS.txt','.gitattributes','PSScriptAnalyzerSettings.psd1','build-exe.ps1',
-    'gdid-tool.bat','tests\WPN_TEST_PLAN.md','tests\TELEMETRY_TEST_PLAN.md',
+    'gdid-tool.bat','tests\HOSTS_TEST_PLAN.md','tests\WPN_TEST_PLAN.md',
+    'tests\TELEMETRY_TEST_PLAN.md',
     'tests\Validate-GDIDTool.ps1','tests\Parse-AllPowerShell.ps1',
     'tests\Run-AllChecks.ps1','tests\Run-AllChecks.cmd',
     '.github\workflows\powershell-validation.yml'
@@ -149,6 +150,25 @@ if ($null -ne $validatorAst) {
     if ($portableHashHelper.Count -eq 1 -and $moduleHashCalls.Count -eq 0) {
         Pass 'Checksum validator uses the engine-independent .NET SHA-256 helper'
     }
+
+    # A backslash does not escape '$' in a PowerShell expandable string. Regex
+    # source literals containing a literal dollar sign must therefore be
+    # single-quoted (or use PowerShell's backtick escape). This regression gate
+    # prevents patterns such as "\$config" from dereferencing an undefined
+    # variable under StrictMode before the validator can run its checks.
+    $regexLiteralInterpolationHazards = @($validatorAst.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.ExpandableStringExpressionAst] -and
+        [string]$node.Extent.Text -match '\\\$[A-Za-z_][A-Za-z0-9_]*'
+    }, $true))
+    foreach ($hazard in $regexLiteralInterpolationHazards) {
+        Fail ("Validator expandable string contains backslash-dollar interpolation at line {0}: {1}" -f
+            $hazard.Extent.StartLineNumber,
+            $hazard.Extent.Text)
+    }
+    if ($regexLiteralInterpolationHazards.Count -eq 0) {
+        Pass 'Validator regex literals do not misuse backslash as a PowerShell dollar-sign escape'
+    }
 }
 
 if (-not (Test-Path -LiteralPath $mainPath)) { throw 'Main script is missing.' }
@@ -166,8 +186,8 @@ if ($null -ne $mainAst) {
 }
 
 Require-Match $main ([ordered]@{
-    'tool version' = '(?m)^\s*\$script:ToolVersion\s*=\s*''3\.7\.3-audited-telemetry''\s*$'
-    'config schema 5' = '(?m)^\s*\$script:CurrentConfigSchema\s*=\s*5\s*$'
+    'tool version' = '(?m)^\s*\$script:ToolVersion\s*=\s*''3\.8\.1-audited-hosts''\s*$'
+    'config schema 6' = '(?m)^\s*\$script:CurrentConfigSchema\s*=\s*6\s*$'
     'state schema 6' = '(?m)^\s*\$script:CurrentStateSchema\s*=\s*6\s*$'
     'state migration' = '(?m)^function\s+Upgrade-StateToCurrentSchema\b'
 }) 'Version/schema'
@@ -182,6 +202,7 @@ Require-Match $workflow ([ordered]@{
     'autocrlf disabled before checkout' = '(?s)git config --global core\.autocrlf false.*uses:\s*actions/checkout@'
     'checkout action pinned to a commit' = '(?m)^\s*uses:\s*actions/checkout@[0-9a-f]{40}\s*(?:#.*)?$'
     'checkout EOL diagnostics' = 'git ls-files --eol'
+    'source-archive byte validation' = 'git archive --format=zip'
 }) 'GitHub Actions checkout-byte policy'
 
 Require-Match $main ([ordered]@{
@@ -251,6 +272,103 @@ Require-Match $main ([ordered]@{
     'original identity restore' = '(?m)^function\s+Restore-OriginalIdentity\b'
 }) 'CDP/identity implementation'
 
+Require-Match $main ([ordered]@{
+    'DDS group switch' = 'blockDDSHosts\s*=\s*\$true'
+    'Activity group switch' = 'blockActivityHosts\s*=\s*\$true'
+    'WNS group switch default off' = 'blockWnsHosts\s*=\s*\$false'
+    'AAD group switch default off' = 'blockAADHost\s*=\s*\$false'
+    'custom exact-name list' = 'additionalHostDomains\s*=\s*@\(\)'
+    'custom hostname validator' = '(?m)^function\s+ConvertTo-NormalizedHostDomainList\b'
+    'IP literal rejection' = '\[System\.Net\.IPAddress\]::TryParse\(\$domain'
+    'install-time domain normalization' = "-Name 'HOSTS installation domains'"
+    'group resolver' = '(?m)^function\s+Get-ConfiguredHostDomainGroups\b'
+    'exact-set verifier' = '(?m)^function\s+Get-HostsDomainVerification\b'
+    'missing IPv4 diagnostics' = 'MissingIPv4'
+    'unexpected IPv6 diagnostics' = 'UnexpectedIPv6'
+    'duplicate diagnostics' = 'DuplicateIPv4'
+    'invalid managed-line diagnostics' = 'InvalidLines'
+    'schema-5 migration guard' = '\$sourceConfigSchema\s+-lt\s+6'
+    'legacy Activity behavior preserved' = 'config\[''blockActivityHosts''\]\s*=\s*\[bool\]\$config\[''blockHosts''\]'
+    'dds.microsoft.com' = "'dds\.microsoft\.com'"
+    'fd.dds.microsoft.com' = "'fd\.dds\.microsoft\.com'"
+    'cs.dds.microsoft.com' = "'cs\.dds\.microsoft\.com'"
+    'aad.cs.dds.microsoft.com' = "'aad\.cs\.dds\.microsoft\.com'"
+    'continuum.dds.microsoft.com' = "'continuum\.dds\.microsoft\.com'"
+    'cdpcs.access.microsoft.com' = "'cdpcs\.access\.microsoft\.com'"
+    'activity.windows.com' = "'activity\.windows\.com'"
+    'activity.microsoft.com' = "'activity\.microsoft\.com'"
+    'assets.activity.windows.com' = "'assets\.activity\.windows\.com'"
+    'ppe.activity.windows.com' = "'ppe\.activity\.windows\.com'"
+    'client.wns.windows.com' = "'client\.wns\.windows\.com'"
+    'global.notify.windows.com' = "'global\.notify\.windows\.com'"
+    'sinnc-df.notify.windows.com' = "'sinnc-df\.notify\.windows\.com'"
+    'bn2-df.notify.windows.com' = "'bn2-df\.notify\.windows\.com'"
+    'bn3p.notify.windows.com' = "'bn3p\.notify\.windows\.com'"
+    'db3p.notify.windows.com' = "'db3p\.notify\.windows\.com'"
+}) 'Grouped HOSTS implementation'
+
+# Verify the exact built-in groups, not merely that each hostname appears
+# somewhere in the source. This catches duplicates, omissions, and accidental
+# movement between the independent collateral-risk controls.
+$expectedHostGroups = [ordered]@{
+    DDSHostDomains = @(
+        'dds.microsoft.com',
+        'fd.dds.microsoft.com',
+        'cs.dds.microsoft.com',
+        'continuum.dds.microsoft.com',
+        'cdpcs.access.microsoft.com'
+    )
+    AADHostDomains = @('aad.cs.dds.microsoft.com')
+    ActivityHostDomains = @(
+        'activity.windows.com',
+        'activity.microsoft.com',
+        'assets.activity.windows.com',
+        'ppe.activity.windows.com'
+    )
+    WnsHostDomains = @(
+        'client.wns.windows.com',
+        'global.notify.windows.com',
+        'sinnc-df.notify.windows.com',
+        'bn2-df.notify.windows.com',
+        'bn3p.notify.windows.com',
+        'db3p.notify.windows.com'
+    )
+}
+$hostGroupFailureCountBefore = $failures.Count
+$allBuiltInHosts = New-Object 'System.Collections.Generic.List[string]'
+foreach ($groupName in $expectedHostGroups.Keys) {
+    $assignmentPattern = '(?s)\$script:' + [regex]::Escape([string]$groupName) + '\s*=\s*@\((.*?)\)'
+    $assignmentMatch = [regex]::Match($main, $assignmentPattern)
+    if (-not $assignmentMatch.Success) {
+        Fail "Cannot extract built-in HOSTS group: $groupName"
+        continue
+    }
+
+    $actualHosts = @(
+        [regex]::Matches($assignmentMatch.Groups[1].Value, "'([^']+)'") |
+            ForEach-Object { $_.Groups[1].Value.ToLowerInvariant() }
+    )
+    $expectedHosts = @($expectedHostGroups[$groupName])
+    $duplicates = @($actualHosts | Group-Object | Where-Object Count -gt 1 | Select-Object -ExpandProperty Name)
+    $missing = @($expectedHosts | Where-Object { $_ -notin $actualHosts })
+    $unexpected = @($actualHosts | Where-Object { $_ -notin $expectedHosts })
+
+    if ($duplicates.Count -gt 0) { Fail "Built-in HOSTS group $groupName has duplicate(s): $($duplicates -join ', ')" }
+    if ($missing.Count -gt 0) { Fail "Built-in HOSTS group $groupName is missing: $($missing -join ', ')" }
+    if ($unexpected.Count -gt 0) { Fail "Built-in HOSTS group $groupName has unexpected name(s): $($unexpected -join ', ')" }
+    foreach ($hostName in $actualHosts) { $allBuiltInHosts.Add($hostName) }
+}
+$allBuiltInDuplicates = @($allBuiltInHosts | Group-Object | Where-Object Count -gt 1 | Select-Object -ExpandProperty Name)
+if ($allBuiltInHosts.Count -ne 16) {
+    Fail "Built-in HOSTS groups contain $($allBuiltInHosts.Count) entries; expected 16."
+}
+if ($allBuiltInDuplicates.Count -gt 0) {
+    Fail "Built-in HOSTS groups overlap: $($allBuiltInDuplicates -join ', ')"
+}
+if ($failures.Count -eq $hostGroupFailureCountBefore) {
+    Pass 'Built-in HOSTS groups exactly match the 16-name source list without overlap'
+}
+
 Require-Absent $main ([ordered]@{
     'IP firewall commands' = '\b(New-NetFirewallRule|Set-NetFirewallRule|Remove-NetFirewallRule)\b'
     'legacy firewall refresh command' = "'refreshfw'"
@@ -260,25 +378,33 @@ Require-Absent $main ([ordered]@{
     'elevated rotation task' = 'New-ScheduledTaskPrincipal[^\r\n]+RunLevel\s+Highest'
     'dynamic expression execution' = '\bInvoke-Expression\b|\biex\b'
     'encoded command' = '-EncodedCommand\b'
+    'runtime DNS discovery for HOSTS names' = '\bResolve-DnsName\b|GetHostAddresses'
 }) 'Removed/unsafe mechanisms'
 
 # Validate JSON shape and exact shipped defaults.
 try {
     $raw = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
     $expected = [ordered]@{
-        schemaVersion = 5; rotationMode = 'onDemand'; timedIntervalMin = 30;
+        schemaVersion = 6; rotationMode = 'onDemand'; timedIntervalMin = 30;
         blockCDP = $true; blockWpn = $false; blockTelemetry = $false;
         requestDiagnosticDataDelete = $false; blockHosts = $true;
-        blockAADHost = $false; blockDO = $false; killPhoneLink = $false;
-        killOneDrive = $false; killStore = $false; killTimeline = $false;
-        hookMethod = 'registry'
+        blockDDSHosts = $true; blockActivityHosts = $true;
+        blockWnsHosts = $false; blockAADHost = $false;
+        blockDO = $false; killPhoneLink = $false; killOneDrive = $false;
+        killStore = $false; killTimeline = $false; hookMethod = 'registry'
     }
     $names = @($raw.PSObject.Properties.Name)
     foreach ($key in $expected.Keys) {
         if ($names -notcontains $key) { Fail "Config missing key: $key"; continue }
         if ([string]$raw.$key -cne [string]$expected[$key]) { Fail "Config $key expected '$($expected[$key])', found '$($raw.$key)'" }
     }
-    foreach ($name in $names) { if (-not $expected.Contains($name)) { Fail "Config unknown key: $name" } }
+    if ($names -notcontains 'additionalHostDomains') {
+        Fail 'Config missing key: additionalHostDomains'
+    } elseif (@($raw.additionalHostDomains).Count -ne 0) {
+        Fail 'Config additionalHostDomains must be an empty array by default.'
+    }
+    $allowedNames = @($expected.Keys) + 'additionalHostDomains'
+    foreach ($name in $names) { if ($name -notin $allowedNames) { Fail "Config unknown key: $name" } }
     if (-not ($failures | Where-Object { $_ -like 'Config *' })) { Pass 'Configuration schema, keys, and defaults match' }
 } catch { Fail "Configuration JSON: $($_.Exception.Message)" }
 
@@ -292,12 +418,18 @@ Require-Match $readme ([ordered]@{
     'Intune warning' = 'Intune/MDM'
     'validation first' = 'Run-AllChecks\.cmd'
     'dual parser disclosure' = '(?s)Windows PowerShell 5\.1.*PowerShell 7|PowerShell 7.*Windows PowerShell 5\.1'
+    'all-16 instructions' = 'Enable all 16 names'
+    'DDS group documentation' = '`blockDDSHosts`'
+    'WNS collateral documentation' = '`blockWnsHosts=true` blocks six exact WNS/notify names'
+    'custom names documentation' = '`additionalHostDomains` is stored as a JSON array'
+    'NXDOMAIN disclosure' = 'current NXDOMAIN response is not treated as evidence'
 }) 'README telemetry/validation disclosure'
 
 Require-Match $audit ([ordered]@{
     'Issue 12 disposition' = 'Issue #12 disposition'
     'telemetry effectiveness matrix' = 'Effectiveness matrix'
     'live test limitation' = 'not Windows'
+    'HOSTS 3.8 section' = 'Grouped HOSTS expansion in 3\.8\.0'
 }) 'Audit documentation'
 
 # Verify every packaged payload listed in the SHA-256 manifest. The manifest
