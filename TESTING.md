@@ -21,13 +21,16 @@ This is non-mutating. It performs the following sequential checks:
 2. Repeats the parse with PowerShell 7.
 3. Rejects unsafe unbraced variable-plus-colon interpolation even apart from
    normal parser diagnostics.
-4. Runs the package validator under both engines.
-5. Verifies the manifest with a .NET SHA-256 helper that has no dependency on
+4. Rejects validator regex literals that incorrectly use backslash to escape a
+   PowerShell dollar sign before the validator is executed.
+5. Runs the package validator under both engines.
+6. Verifies the manifest with a .NET SHA-256 helper that has no dependency on
    PowerShell module auto-loading, then checks the configuration schema,
+   all 16 built-in HOSTS names and grouping markers, custom-domain validation,
    required implementation markers, prohibited mechanisms, and duplicate
    function names.
-6. Runs `help`, `config`, and the read-only `status` command under both engines.
-7. Writes one complete log to `tests\validation-results`.
+7. Runs `help`, `config`, and the read-only `status` command under both engines.
+8. Writes one complete log to `tests\validation-results`.
 
 No registry, service, HOSTS, policy, scheduled-task, or identity value is
 changed by this validation command. PowerShell 7 must be installed because the
@@ -86,6 +89,24 @@ Do not make the validator silently normalize content before hashing. The
 manifest is intended to detect any byte change, including an unintended
 line-ending rewrite.
 
+## HOSTS-specific checks
+
+The static validator confirms that all 16 research-derived built-in names are
+present in the expected DDS/CDP, Activity, WNS/notify, and AAD/DDS groups. It
+also verifies the schema-6 group keys, the custom exact-name validator, exact-set
+verification, and the documented high-collateral defaults.
+
+Static checks cannot prove Windows resolver behavior or rollback on a real
+HOSTS file. Use `tests/HOSTS_TEST_PLAN.md` in a disposable VM to test:
+
+- fresh defaults and the all-16 configuration;
+- IPv4/IPv6 exact-set verification;
+- stale-entry removal after a group is disabled;
+- custom-domain normalization, rejection, and clearing;
+- malformed-marker refusal;
+- encoding preservation and transactional rollback; and
+- uninstall removal without deleting or reordering unrelated HOSTS records.
+
 ## Parser-only check
 
 To collect all parser errors without running the main script:
@@ -118,9 +139,12 @@ not replace execution under each supported engine.
 ## Release gate
 
 The included GitHub Actions workflow runs the checks on Windows using both
-Windows PowerShell and PowerShell 7. `build-exe.ps1` also refuses to build until
-the dual-engine gate passes. Release archives and checksums should be generated
-only after that Windows workflow succeeds.
+Windows PowerShell and PowerShell 7, then creates a `git archive` ZIP and runs
+the checksum/package validator against the exported bytes as well. This catches
+line-ending or attribute differences between a checkout and a GitHub-style
+source archive. `build-exe.ps1` also refuses to build until the dual-engine gate
+passes. Release archives and checksums should be generated only after that
+Windows workflow succeeds.
 
 ## Live integration testing
 
@@ -129,6 +153,7 @@ registry, Group Policy, Task Scheduler, or HOSTS operation on every build and
 edition. Before deploying mutating commands, use a disposable VM snapshot and
 follow:
 
+- `tests/HOSTS_TEST_PLAN.md`
 - `tests/WPN_TEST_PLAN.md`
 - `tests/TELEMETRY_TEST_PLAN.md`
 
