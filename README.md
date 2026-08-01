@@ -1,6 +1,6 @@
-# GDID Privacy Tool — Audited Telemetry/WPN Build 3.7.3
+# GDID Privacy Tool — Audited HOSTS/Telemetry/WPN Build 3.8.1
 
-This package is a corrected and deliberately narrower revision of the original **gdid-privacy** project. It focuses on system changes that can be applied, verified, and restored locally.
+This package is a corrected and deliberately narrower revision of the original [**gdid-privacy**](https://github.com/someguy0110/gdid-privacy) project. It focuses on system changes that can be applied, verified, and restored locally.
 
 It can:
 
@@ -11,7 +11,7 @@ It can:
 - apply and report edition-aware Windows diagnostic-data policies;
 - apply the policy equivalents of turning off optional diagnostic data, tailored experiences, and inking/typing diagnostic collection;
 - optionally submit Windows' supported diagnostic-data deletion request;
-- add selected exact-name HOSTS entries;
+- manage grouped exact-name HOSTS entries for DDS/CDP, Activity, WNS/notify, optional AAD/DDS, and validated user-supplied names;
 - apply several other documented privacy/feature policies; and
 - restore exact protected pre-tool values during `uninstall`.
 
@@ -24,10 +24,16 @@ The high-collateral controls are **off by default**:
 ```json
 "blockWpn": false,
 "blockTelemetry": false,
-"requestDiagnosticDataDelete": false
+"requestDiagnosticDataDelete": false,
+"blockWnsHosts": false,
+"blockAADHost": false
 ```
 
 `blockWpn=true` can disable cloud push notifications, local toast/tile/raw-notification workflows, Store-app background behavior, and WNS-triggered management operations.
+
+`blockWnsHosts=true` blocks six exact WNS/notify names. Microsoft documents that loss of WNS connectivity can stop push notifications and affect MDM device management, mail synchronization, and settings synchronization. It is therefore separate from the lower-collateral DDS and Activity groups.
+
+`blockAADHost=true` adds `aad.cs.dds.microsoft.com`. It remains a separate opt-in because the name is associated by the referenced reverse-engineering work with an authentication-related path.
 
 `blockTelemetry=true` can break or degrade:
 
@@ -70,9 +76,20 @@ After validation passes, inspect without changing anything:
 .\gdid-tool.ps1 status
 ```
 
-Apply the default audited hardening:
+Apply the default audited hardening. On a fresh schema-6 configuration this includes five DDS/CDP names and four Activity names, but not the high-collateral WNS or AAD groups:
 
 ```powershell
+.\gdid-tool.ps1 install
+```
+
+Enable all 16 names from the referenced `GDID-Disabler` list:
+
+```powershell
+.\gdid-tool.ps1 config blockHosts true
+.\gdid-tool.ps1 config blockDDSHosts true
+.\gdid-tool.ps1 config blockActivityHosts true
+.\gdid-tool.ps1 config blockWnsHosts true
+.\gdid-tool.ps1 config blockAADHost true
 .\gdid-tool.ps1 install
 ```
 
@@ -125,7 +142,7 @@ The shipped `gdid-config.json` is:
 
 ```json
 {
-  "schemaVersion": 5,
+  "schemaVersion": 6,
   "rotationMode": "onDemand",
   "timedIntervalMin": 30,
   "blockCDP": true,
@@ -133,7 +150,11 @@ The shipped `gdid-config.json` is:
   "blockTelemetry": false,
   "requestDiagnosticDataDelete": false,
   "blockHosts": true,
+  "blockDDSHosts": true,
+  "blockActivityHosts": true,
+  "blockWnsHosts": false,
   "blockAADHost": false,
+  "additionalHostDomains": [],
   "blockDO": false,
   "killPhoneLink": false,
   "killOneDrive": false,
@@ -151,8 +172,12 @@ The shipped `gdid-config.json` is:
 | `blockWpn` | `false` | Disable/stop `WpnService`, the `WpnUserService` template, and current `WpnUserService_*` instances. High collateral. |
 | `blockTelemetry` | `false` | Apply the diagnostic-data policy set below, run Group Policy refresh, and disable/stop `DiagTrack` and `dmwappushservice`. High collateral. |
 | `requestDiagnosticDataDelete` | `false` | One-shot request through `Clear-WindowsDiagnosticData -Force`; requires `blockTelemetry=true`. |
-| `blockHosts` | `true` | Add exact IPv4 and IPv6 HOSTS entries for `activity.windows.com`. |
-| `blockAADHost` | `false` | Also block `aad.cs.dds.microsoft.com`; may break Microsoft-account functionality. |
+| `blockHosts` | `true` | Master switch for every managed HOSTS group and `additionalHostDomains`. When false, the tool removes its marked block. |
+| `blockDDSHosts` | `true` | Add five DDS/CDP exact names, excluding the separately controlled AAD name. |
+| `blockActivityHosts` | `true` | Add four Activity/Project Rome exact names. |
+| `blockWnsHosts` | `false` | Add six WNS/notify exact names. High collateral: push, MDM notifications, mail sync, and settings sync can fail. |
+| `blockAADHost` | `false` | Add `aad.cs.dds.microsoft.com`; may affect Microsoft-account or AAD-related functionality. |
+| `additionalHostDomains` | `[]` | Optional validated exact FQDNs for newly discovered names. URLs, wildcards, IP literals, comments, and paths are rejected. |
 | `blockDO` | `false` | Set `DODownloadMode=99`; does not disable `DoSvc` and is not GDID rotation. |
 | `killPhoneLink` | `false` | Set `EnableMmx=0`. |
 | `killOneDrive` | `false` | Set `DisableFileSyncNGSC=1`. |
@@ -161,6 +186,19 @@ The shipped `gdid-config.json` is:
 | `hookMethod` | `registry` | `registry` or `none`. The original AppInit/API-hook mode is unsupported and rejected. |
 
 Boolean values are parsed strictly. Strings such as `false`, `0`, `no`, and `off` become false; malformed values and unknown JSON keys are rejected rather than silently accepted.
+
+`additionalHostDomains` is stored as a JSON array. The command interface accepts a comma-, semicolon-, or newline-separated list and normalizes it to lowercase exact names:
+
+```powershell
+.\gdid-tool.ps1 config additionalHostDomains "new.example.microsoft.com, second.example.microsoft.com"
+.\gdid-tool.ps1 install
+
+# Clear the custom list:
+.\gdid-tool.ps1 config additionalHostDomains ""
+.\gdid-tool.ps1 install
+```
+
+When a schema-5-or-earlier configuration is retained during an upgrade, the loader preserves the old behavior: `blockHosts` continues to control the Activity group, any existing `blockAADHost` choice is retained, and the new DDS and WNS group switches remain off until explicitly configured. A newly shipped schema-6 configuration uses the defaults shown above.
 
 # Diagnostic-data implementation
 
@@ -406,9 +444,21 @@ Mutating commands are serialized with an exclusive per-user file lock that works
 
 # HOSTS behavior
 
-The script writes a marked block containing both IPv4 and IPv6 entries. It preserves the detected file encoding, modifies only its own block, verifies exact entries, restores a temporary backup on failure, rejects malformed/duplicate markers, and flushes DNS cache.
+The script writes a marked block containing both `0.0.0.0` and `::` entries. It preserves the detected file encoding, replaces or removes only its marker-delimited records, verifies that the managed block contains the **exact requested set** with no missing, unexpected, duplicate, or malformed entries, restores a temporary backup on failure, rejects malformed/duplicate markers, and flushes the DNS cache. Unrelated records remain intact, although separator/trailing newlines around the managed block can be normalized.
 
-HOSTS blocking is exact-name and best effort. It cannot prove endpoint completeness, and it does not cover applications that use other names or independent transports.
+The built-in groups are:
+
+| Group/configuration | Exact names | Default |
+|---|---|---:|
+| `blockDDSHosts` | `dds.microsoft.com`, `fd.dds.microsoft.com`, `cs.dds.microsoft.com`, `continuum.dds.microsoft.com`, `cdpcs.access.microsoft.com` | `true` |
+| `blockActivityHosts` | `activity.windows.com`, `activity.microsoft.com`, `assets.activity.windows.com`, `ppe.activity.windows.com` | `true` |
+| `blockWnsHosts` | `client.wns.windows.com`, `global.notify.windows.com`, `sinnc-df.notify.windows.com`, `bn2-df.notify.windows.com`, `bn3p.notify.windows.com`, `db3p.notify.windows.com` | `false` |
+| `blockAADHost` | `aad.cs.dds.microsoft.com` | `false` |
+| `additionalHostDomains` | User-supplied validated exact FQDNs | empty |
+
+The names are written whether or not they resolve at installation time. A current NXDOMAIN response is not treated as evidence that a name is permanently unused; conversely, a HOSTS entry does not prove that Windows currently contacts that name. No DNS lookup is needed to install an exact-name block.
+
+HOSTS blocking remains exact-name and best effort. It cannot block an unlisted alias, wildcard family, direct IP connection, application-controlled DNS/DoH path, or another transport that bypasses the normal Windows resolver. The research-derived list is not represented as endpoint-complete.
 
 # Validation and test plans
 
@@ -428,10 +478,12 @@ when installed, and collects all results in one log. The repository also ships a
 `.bat` and `.cmd` launchers as `text eol=crlf`. Git stores normalized text in the
 repository/index and writes or exports the Command Prompt launchers with CRLF,
 so byte-for-byte checksums remain consistent across Windows and Linux checkouts,
-GitHub source archives, and GitHub Actions. See [`TESTING.md`](TESTING.md).
+GitHub source archives, and GitHub Actions. CI also builds a `git archive` ZIP
+and validates its exported bytes. See [`TESTING.md`](TESTING.md).
 
 Then use disposable VM snapshots and follow:
 
+- [`tests/HOSTS_TEST_PLAN.md`](tests/HOSTS_TEST_PLAN.md)
 - [`tests/WPN_TEST_PLAN.md`](tests/WPN_TEST_PLAN.md)
 - [`tests/TELEMETRY_TEST_PLAN.md`](tests/TELEMETRY_TEST_PLAN.md)
 
@@ -469,4 +521,4 @@ Primary Microsoft documentation used for this build includes:
 - Windows service guidance and Intune/Endpoint Analytics requirements
 - `Clear-WindowsDiagnosticData` cmdlet documentation
 
-The reverse-engineering claims that motivated the additional service controls come from `SmtimesIWndr/We-running-GDID-back`. Those observations are independent research, not Microsoft documentation. This build uses documented Windows controls where available and labels its remaining limits explicitly.
+The reverse-engineering claims that motivated the additional service controls come from [`SmtimesIWndr/We-running-GDID-back`](https://github.com/SmtimesIWndr/We-running-GDID-back). The grouped HOSTS names come from [`SmtimesIWndr/GDID-Disabler`](https://github.com/SmtimesIWndr/GDID-Disabler). Those observations and endpoint classifications are independent research, not Microsoft documentation. This build uses documented Windows controls where available and labels its remaining limits explicitly.
