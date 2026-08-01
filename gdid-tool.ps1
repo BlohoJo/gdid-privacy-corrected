@@ -13,7 +13,7 @@
         DiagTrack and dmwappushservice, and submit the supported Windows
         diagnostic-data deletion request;
       * apply selected, documented Windows privacy/feature policies;
-      * add exact-name HOSTS entries for selected endpoints; and
+      * add grouped, exact-name HOSTS entries for selected endpoints; and
       * locally replace existing HKCU GDID registry copies after CDP has been
         verifiably disabled.
 
@@ -63,8 +63,8 @@ $ErrorActionPreference = 'Stop'
 # Constants and configuration schema
 # -----------------------------------------------------------------------------
 
-$script:ToolVersion = '3.7.3-audited-telemetry'
-$script:CurrentConfigSchema = 5
+$script:ToolVersion = '3.8.1-audited-hosts'
+$script:CurrentConfigSchema = 6
 $script:CurrentStateSchema = 6
 
 # PS2EXE leaves $PSScriptRoot empty in compiled programs. Newer releases expose
@@ -158,10 +158,32 @@ $script:HostsPath = if ($env:SystemRoot) {
     $null
 }
 
-# activity.windows.com is the lower-collateral default. The AAD/DDS endpoint is
-# opt-in because it is in a Microsoft account/authentication-related path.
-$script:ActivityHostDomains = @('activity.windows.com')
+# Exact names derived from the referenced GDID-Disabler research script. They
+# are grouped by functional family so users can avoid an all-or-nothing block.
+# The lists are intentionally static: HOSTS entries remain useful even when a
+# name is temporarily NXDOMAIN, but they do not prove endpoint completeness.
+$script:DDSHostDomains = @(
+    'dds.microsoft.com',
+    'fd.dds.microsoft.com',
+    'cs.dds.microsoft.com',
+    'continuum.dds.microsoft.com',
+    'cdpcs.access.microsoft.com'
+)
 $script:AADHostDomains = @('aad.cs.dds.microsoft.com')
+$script:ActivityHostDomains = @(
+    'activity.windows.com',
+    'activity.microsoft.com',
+    'assets.activity.windows.com',
+    'ppe.activity.windows.com'
+)
+$script:WnsHostDomains = @(
+    'client.wns.windows.com',
+    'global.notify.windows.com',
+    'sinnc-df.notify.windows.com',
+    'bn2-df.notify.windows.com',
+    'bn3p.notify.windows.com',
+    'db3p.notify.windows.com'
+)
 
 $script:DefaultConfig = @{
     schemaVersion      = $script:CurrentConfigSchema
@@ -171,8 +193,12 @@ $script:DefaultConfig = @{
     blockWpn           = $false     # high-collateral opt-in: disables system/user WNS services
     blockTelemetry     = $false     # opt-in: diagnostic-data policies plus DiagTrack/dmwappushservice
     requestDiagnosticDataDelete = $false # one-shot opt-in; submits Clear-WindowsDiagnosticData request
-    blockHosts         = $true
-    blockAADHost       = $false
+    blockHosts         = $true      # master switch for all HOSTS groups below
+    blockDDSHosts      = $true      # DDS/CDP names, excluding the separate AAD name
+    blockActivityHosts = $true      # Activity History / Project Rome names
+    blockWnsHosts      = $false     # high collateral: push, MDM, mail/settings sync can break
+    blockAADHost       = $false     # high collateral: authentication-related path
+    additionalHostDomains = @()     # validated exact FQDNs for future discoveries
     blockDO            = $false     # opt-in DODownloadMode=99; not a GDID rotation mechanism
     killPhoneLink      = $false
     killOneDrive       = $false
@@ -187,6 +213,9 @@ $script:BooleanConfigKeys = @(
     'blockTelemetry',
     'requestDiagnosticDataDelete',
     'blockHosts',
+    'blockDDSHosts',
+    'blockActivityHosts',
+    'blockWnsHosts',
     'blockAADHost',
     'blockDO',
     'killPhoneLink',
@@ -877,9 +906,75 @@ function ConvertTo-StrictBoolean {
 function Copy-DefaultConfig {
     $copy = @{}
     foreach ($name in $script:DefaultConfig.Keys) {
-        $copy[$name] = $script:DefaultConfig[$name]
+        $value = $script:DefaultConfig[$name]
+        if ($value -is [Array]) {
+            $copy[$name] = @($value)
+        } else {
+            $copy[$name] = $value
+        }
     }
     return $copy
+}
+
+function ConvertTo-NormalizedHostDomainList {
+    param(
+        [AllowNull()]$InputObject,
+        [Parameter(Mandatory = $true)][string]$Name
+    )
+
+    if ($null -eq $InputObject) {
+        return @()
+    }
+
+    $rawItems = @()
+    if ($InputObject -is [string]) {
+        $rawItems = @([string]$InputObject -split '[,;\r\n]+')
+    } elseif ($InputObject -is [System.Collections.IEnumerable]) {
+        foreach ($item in $InputObject) {
+            if ($null -eq $item) {
+                throw "Configuration '$Name' cannot contain null entries."
+            }
+            if ($item -isnot [string]) {
+                throw "Configuration '$Name' must contain only DNS-name strings."
+            }
+            $rawItems += @([string]$item -split '[,;\r\n]+')
+        }
+    } else {
+        throw "Configuration '$Name' must be a DNS-name string or an array of DNS-name strings."
+    }
+
+    $normalized = @()
+    foreach ($rawItem in $rawItems) {
+        $domain = ([string]$rawItem).Trim().TrimEnd('.').ToLowerInvariant()
+        if ([string]::IsNullOrWhiteSpace($domain)) {
+            continue
+        }
+        [System.Net.IPAddress]$parsedAddress = $null
+        if ([System.Net.IPAddress]::TryParse($domain, [ref]$parsedAddress) -or
+            $domain.Length -gt 253 -or
+            $domain -notmatch '^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$') {
+            throw "Configuration '$Name' contains invalid exact DNS name '$rawItem'. Use a hostname only; URLs, wildcards, IP literals, comments, and paths are not accepted."
+        }
+        $normalized += $domain
+    }
+
+    return @($normalized | Sort-Object -Unique)
+}
+
+function Format-ConfigValue {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [AllowNull()]$Value
+    )
+
+    if ($Name -eq 'additionalHostDomains') {
+        $items = @($Value)
+        if ($items.Count -eq 0) {
+            return '(none)'
+        }
+        return ($items -join ', ')
+    }
+    return [string]$Value
 }
 
 function Test-ValidGDID {
@@ -923,10 +1018,10 @@ function Get-Config {
         throw "Configuration '$($script:ConfigPath)' contains unknown key(s): $($unknownConfigKeys -join ', '). Correct the spelling or remove the unsupported field."
     }
 
+    $sourceConfigSchema = 1
     if (Test-ObjectProperty -InputObject $raw -Name 'schemaVersion') {
-        $configSchema = 0
-        if (-not [int]::TryParse([string]$raw.schemaVersion, [ref]$configSchema) -or
-            $configSchema -lt 1 -or $configSchema -gt $script:CurrentConfigSchema) {
+        if (-not [int]::TryParse([string]$raw.schemaVersion, [ref]$sourceConfigSchema) -or
+            $sourceConfigSchema -lt 1 -or $sourceConfigSchema -gt $script:CurrentConfigSchema) {
             throw "Configuration 'schemaVersion' must be an integer from 1 through $($script:CurrentConfigSchema)."
         }
     }
@@ -943,11 +1038,18 @@ function Get-Config {
             $config[$name] = ConvertTo-StrictBoolean -InputObject $raw.$name -Name $name
         }
     }
+    if (Test-ObjectProperty -InputObject $raw -Name 'additionalHostDomains') {
+        $config['additionalHostDomains'] = @(
+            ConvertTo-NormalizedHostDomainList `
+                -InputObject $raw.additionalHostDomains `
+                -Name 'additionalHostDomains'
+        )
+    }
 
     # Migrate the attached archive's pre-Issue-12 configuration shape. Its
-    # blockActivity key represented the lower-collateral activity endpoint;
-    # blockDDS is deliberately not promoted to blockAADHost because doing so
-    # would silently opt the user into an authentication-related HOSTS block.
+    # blockActivity key represented activity-domain blocking. Historical
+    # blockDDS controlled a different IP-firewall feature, so it is not silently
+    # converted into the new exact-name DDS group.
     $legacyBlockActivity = $null
     if (Test-ObjectProperty -InputObject $raw -Name 'blockActivity') {
         $legacyBlockActivity = ConvertTo-StrictBoolean -InputObject $raw.blockActivity -Name 'blockActivity'
@@ -959,7 +1061,25 @@ function Get-Config {
     if (Test-ObjectProperty -InputObject $raw -Name 'blockDDS') {
         $null = ConvertTo-StrictBoolean -InputObject $raw.blockDDS -Name 'blockDDS'
         if (-not $Scheduled) {
-            Write-Warn "Legacy config key 'blockDDS' is ignored. Use blockAADHost=true explicitly only after reviewing its Microsoft-account collateral risk."
+            Write-Warn "Legacy config key 'blockDDS' is ignored because it controlled the removed IP-firewall feature. Use blockDDSHosts=true for exact-name DDS blocking and blockAADHost=true only after reviewing authentication collateral."
+        }
+    }
+
+    # Schema 5 and earlier used blockHosts solely for activity.windows.com.
+    # Preserve that behavior when an existing configuration lacks the new
+    # group switches. Fresh schema-6 configurations explicitly choose groups.
+    if ($sourceConfigSchema -lt 6) {
+        if (-not (Test-ObjectProperty -InputObject $raw -Name 'blockActivityHosts')) {
+            $config['blockActivityHosts'] = [bool]$config['blockHosts']
+        }
+        if (-not (Test-ObjectProperty -InputObject $raw -Name 'blockDDSHosts')) {
+            $config['blockDDSHosts'] = $false
+        }
+        if (-not (Test-ObjectProperty -InputObject $raw -Name 'blockWnsHosts')) {
+            $config['blockWnsHosts'] = $false
+        }
+        if (-not (Test-ObjectProperty -InputObject $raw -Name 'additionalHostDomains')) {
+            $config['additionalHostDomains'] = @()
         }
     }
 
@@ -1028,7 +1148,11 @@ function Save-Config {
         blockTelemetry = [bool]$Config['blockTelemetry']
         requestDiagnosticDataDelete = [bool]$Config['requestDiagnosticDataDelete']
         blockHosts = [bool]$Config['blockHosts']
+        blockDDSHosts = [bool]$Config['blockDDSHosts']
+        blockActivityHosts = [bool]$Config['blockActivityHosts']
+        blockWnsHosts = [bool]$Config['blockWnsHosts']
         blockAADHost = [bool]$Config['blockAADHost']
+        additionalHostDomains = @($Config['additionalHostDomains'])
         blockDO = [bool]$Config['blockDO']
         killPhoneLink = [bool]$Config['killPhoneLink']
         killOneDrive = [bool]$Config['killOneDrive']
@@ -1070,6 +1194,14 @@ function Convert-ConfigValue {
                 throw 'timedIntervalMin must be an integer between 15 and 1440.'
             }
             return $number
+        }
+        'additionalHostDomains' {
+            $domains = @(
+                ConvertTo-NormalizedHostDomainList `
+                    -InputObject $Text `
+                    -Name 'additionalHostDomains'
+            )
+            return ,$domains
         }
         'hookMethod' {
             $normalized = $Text.Trim().ToLowerInvariant()
@@ -4315,6 +4447,45 @@ function Write-HostsTextWithRollback {
     }
 }
 
+function Get-ConfiguredHostDomainGroups {
+    param([Parameter(Mandatory = $true)][hashtable]$Config)
+
+    $groups = @(
+        [pscustomobject]@{
+            ConfigKey = 'blockDDSHosts'
+            Label = 'DDS/CDP'
+            Enabled = [bool]$Config['blockDDSHosts']
+            Domains = @($script:DDSHostDomains)
+        },
+        [pscustomobject]@{
+            ConfigKey = 'blockActivityHosts'
+            Label = 'Activity'
+            Enabled = [bool]$Config['blockActivityHosts']
+            Domains = @($script:ActivityHostDomains)
+        },
+        [pscustomobject]@{
+            ConfigKey = 'blockWnsHosts'
+            Label = 'WNS/notify'
+            Enabled = [bool]$Config['blockWnsHosts']
+            Domains = @($script:WnsHostDomains)
+        },
+        [pscustomobject]@{
+            ConfigKey = 'blockAADHost'
+            Label = 'AAD/DDS'
+            Enabled = [bool]$Config['blockAADHost']
+            Domains = @($script:AADHostDomains)
+        },
+        [pscustomobject]@{
+            ConfigKey = 'additionalHostDomains'
+            Label = 'Additional exact names'
+            Enabled = @($Config['additionalHostDomains']).Count -gt 0
+            Domains = @($Config['additionalHostDomains'])
+        }
+    )
+
+    return @($groups)
+}
+
 function Get-ConfiguredHostDomains {
     param([Parameter(Mandatory = $true)][hashtable]$Config)
 
@@ -4322,11 +4493,18 @@ function Get-ConfiguredHostDomains {
         return @()
     }
 
-    $domains = @($script:ActivityHostDomains)
-    if ([bool]$Config['blockAADHost']) {
-        $domains += $script:AADHostDomains
+    $domains = @()
+    foreach ($group in @(Get-ConfiguredHostDomainGroups -Config $Config)) {
+        if ([bool]$group.Enabled) {
+            $domains += @($group.Domains)
+        }
     }
-    return @($domains | Sort-Object -Unique)
+
+    return @(
+        ConvertTo-NormalizedHostDomainList `
+            -InputObject $domains `
+            -Name 'configured HOSTS domains'
+    )
 }
 
 function Get-HostsBlockInfo {
@@ -4384,27 +4562,113 @@ function Flush-DnsCache {
     }
 }
 
-function Test-HostsDomainsBlocked {
-    param([Parameter(Mandatory = $true)][string[]]$Domains)
+function Get-HostsDomainVerification {
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Domains)
 
-    if ($Domains.Count -eq 0) {
-        return $true
-    }
-
+    $requested = @(
+        ConvertTo-NormalizedHostDomainList `
+            -InputObject $Domains `
+            -Name 'HOSTS verification domains'
+    )
     $info = Get-HostsBlockInfo
-    if (-not $info.Exists -or -not $info.WellFormed -or $null -eq $info.BlockText) {
-        return $false
+    $result = [ordered]@{
+        ExactMatch = $false
+        RequestedDomains = @($requested)
+        IPv4Domains = @()
+        IPv6Domains = @()
+        MissingIPv4 = @()
+        MissingIPv6 = @()
+        UnexpectedIPv4 = @()
+        UnexpectedIPv6 = @()
+        DuplicateIPv4 = @()
+        DuplicateIPv6 = @()
+        InvalidLines = @()
     }
 
-    foreach ($domain in $Domains) {
-        $escaped = [regex]::Escape($domain)
-        $hasV4 = [string]$info.BlockText -match "(?im)^\s*0\.0\.0\.0\s+$escaped\s*$"
-        $hasV6 = [string]$info.BlockText -match "(?im)^\s*::\s+$escaped\s*$"
-        if (-not $hasV4 -or -not $hasV6) {
-            return $false
+    if (-not $info.Exists -or -not $info.WellFormed) {
+        return [pscustomobject]$result
+    }
+    if ($null -eq $info.BlockText) {
+        $result.ExactMatch = $requested.Count -eq 0
+        return [pscustomobject]$result
+    }
+
+    $ipv4 = @()
+    $ipv6 = @()
+    $invalidLines = @()
+    foreach ($line in @(([string]$info.BlockText) -split '\r?\n')) {
+        $trimmed = ([string]$line).Trim()
+        if ([string]::IsNullOrWhiteSpace($trimmed) -or
+            $trimmed -eq $script:HostsBeginMarker -or
+            $trimmed -eq $script:HostsEndMarker) {
+            continue
+        }
+
+        $entry = [regex]::Match(
+            $trimmed,
+            '^(0\.0\.0\.0|::)\s+([^\s#]+)\s*$',
+            [Text.RegularExpressions.RegexOptions]::IgnoreCase
+        )
+        if (-not $entry.Success) {
+            $invalidLines += $trimmed
+            continue
+        }
+
+        try {
+            $normalizedEntry = @(
+                ConvertTo-NormalizedHostDomainList `
+                    -InputObject $entry.Groups[2].Value `
+                    -Name 'managed HOSTS entry'
+            )
+            if ($normalizedEntry.Count -ne 1) {
+                throw 'Entry did not normalize to exactly one hostname.'
+            }
+        } catch {
+            $invalidLines += $trimmed
+            continue
+        }
+
+        if ($entry.Groups[1].Value -eq '0.0.0.0') {
+            $ipv4 += $normalizedEntry[0]
+        } else {
+            $ipv6 += $normalizedEntry[0]
         }
     }
-    return $true
+
+    $ipv4Unique = @($ipv4 | Sort-Object -Unique)
+    $ipv6Unique = @($ipv6 | Sort-Object -Unique)
+    $duplicateIPv4 = @($ipv4 | Group-Object | Where-Object Count -gt 1 | Select-Object -ExpandProperty Name)
+    $duplicateIPv6 = @($ipv6 | Group-Object | Where-Object Count -gt 1 | Select-Object -ExpandProperty Name)
+    $missingIPv4 = @($requested | Where-Object { $_ -notin $ipv4Unique })
+    $missingIPv6 = @($requested | Where-Object { $_ -notin $ipv6Unique })
+    $unexpectedIPv4 = @($ipv4Unique | Where-Object { $_ -notin $requested })
+    $unexpectedIPv6 = @($ipv6Unique | Where-Object { $_ -notin $requested })
+
+    $result.IPv4Domains = $ipv4Unique
+    $result.IPv6Domains = $ipv6Unique
+    $result.MissingIPv4 = $missingIPv4
+    $result.MissingIPv6 = $missingIPv6
+    $result.UnexpectedIPv4 = $unexpectedIPv4
+    $result.UnexpectedIPv6 = $unexpectedIPv6
+    $result.DuplicateIPv4 = $duplicateIPv4
+    $result.DuplicateIPv6 = $duplicateIPv6
+    $result.InvalidLines = $invalidLines
+    $result.ExactMatch = (
+        $invalidLines.Count -eq 0 -and
+        $missingIPv4.Count -eq 0 -and
+        $missingIPv6.Count -eq 0 -and
+        $unexpectedIPv4.Count -eq 0 -and
+        $unexpectedIPv6.Count -eq 0 -and
+        $duplicateIPv4.Count -eq 0 -and
+        $duplicateIPv6.Count -eq 0
+    )
+
+    return [pscustomobject]$result
+}
+
+function Test-HostsDomainsBlocked {
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Domains)
+    return [bool](Get-HostsDomainVerification -Domains $Domains).ExactMatch
 }
 
 function Install-HostsBlocks {
@@ -4413,6 +4677,12 @@ function Install-HostsBlocks {
     if (-not $script:HostsPath -or -not (Test-Path -LiteralPath $script:HostsPath)) {
         throw "HOSTS file was not found at '$($script:HostsPath)'."
     }
+
+    $Domains = @(
+        ConvertTo-NormalizedHostDomainList `
+            -InputObject $Domains `
+            -Name 'HOSTS installation domains'
+    )
     if ($Domains.Count -eq 0) {
         throw 'No HOSTS domains were supplied.'
     }
@@ -4805,19 +5075,58 @@ function Show-Status {
     Write-Host "`n-- HOSTS block --" -ForegroundColor Cyan
     $hostsInfo = Get-HostsBlockInfo
     $blockPresent = $null -ne $hostsInfo.BlockText
-    if ([bool]$config['blockHosts']) {
+    $hostsMasterEnabled = [bool]$config['blockHosts']
+    Write-Host "  Master blockHosts switch: $hostsMasterEnabled"
+    foreach ($group in @(Get-ConfiguredHostDomainGroups -Config $config)) {
+        $groupActive = $hostsMasterEnabled -and [bool]$group.Enabled
+        Write-Host ("  {0,-23} configured={1}, active={2}, names={3}" -f
+            $group.Label,
+            [bool]$group.Enabled,
+            $groupActive,
+            @($group.Domains).Count)
+    }
+
+    if ($hostsMasterEnabled) {
         $domains = @(Get-ConfiguredHostDomains -Config $config)
-        $hostsMatch = Test-HostsDomainsBlocked -Domains $domains
-        Write-Host "  Requested domains: $($domains -join ', ')"
-        Write-Host "  Marker block well formed: $($hostsInfo.WellFormed)"
-        Write-Host "  Required IPv4/IPv6 entries present: $hostsMatch" -ForegroundColor $(if ($hostsMatch) { 'Green' } else { 'Yellow' })
+        if ($domains.Count -gt 0) {
+            $hostsVerification = Get-HostsDomainVerification -Domains $domains
+            $hostsMatch = [bool]$hostsVerification.ExactMatch
+            Write-Host "  Requested exact names ($($domains.Count)): $($domains -join ', ')"
+            Write-Host "  Marker block well formed: $($hostsInfo.WellFormed)"
+            Write-Host "  Exact IPv4/IPv6 managed set present: $hostsMatch" -ForegroundColor $(if ($hostsMatch) { 'Green' } else { 'Yellow' })
+            if (-not $hostsMatch) {
+                foreach ($detail in @(
+                    [pscustomobject]@{ Label = 'Missing IPv4'; Values = @($hostsVerification.MissingIPv4) },
+                    [pscustomobject]@{ Label = 'Missing IPv6'; Values = @($hostsVerification.MissingIPv6) },
+                    [pscustomobject]@{ Label = 'Unexpected IPv4'; Values = @($hostsVerification.UnexpectedIPv4) },
+                    [pscustomobject]@{ Label = 'Unexpected IPv6'; Values = @($hostsVerification.UnexpectedIPv6) },
+                    [pscustomobject]@{ Label = 'Duplicate IPv4'; Values = @($hostsVerification.DuplicateIPv4) },
+                    [pscustomobject]@{ Label = 'Duplicate IPv6'; Values = @($hostsVerification.DuplicateIPv6) },
+                    [pscustomobject]@{ Label = 'Invalid managed lines'; Values = @($hostsVerification.InvalidLines) }
+                )) {
+                    if (@($detail.Values).Count -gt 0) {
+                        Write-Warn "$($detail.Label): $(@($detail.Values) -join ', ')"
+                    }
+                }
+            }
+        } else {
+            $hostsMatch = (-not $blockPresent) -and [bool]$hostsInfo.WellFormed
+            Write-Host '  Requested exact names: (no groups or additional names enabled)'
+            Write-Host "  Managed marker block absent: $(-not $blockPresent)" -ForegroundColor $(if ($hostsMatch) { 'Green' } else { 'Yellow' })
+        }
     } else {
         $hostsMatch = (-not $blockPresent) -and [bool]$hostsInfo.WellFormed
-        Write-Host '  Requested domains: (blocking disabled)'
+        Write-Host '  Requested exact names: (master blocking disabled)'
         Write-Host "  Managed marker block absent: $(-not $blockPresent)" -ForegroundColor $(if ($hostsMatch) { 'Green' } else { 'Yellow' })
     }
-    if ([bool]$config['blockAADHost']) {
+    if ($hostsMasterEnabled -and [bool]$config['blockWnsHosts']) {
+        Write-Warn 'WNS hostname blocking can break push notifications, MDM management notifications, mail synchronization, and settings synchronization.'
+    }
+    if ($hostsMasterEnabled -and [bool]$config['blockAADHost']) {
         Write-Warn 'aad.cs.dds.microsoft.com is authentication-related and may break Microsoft-account functionality.'
+    }
+    if ($hostsMasterEnabled -and @($config['additionalHostDomains']).Count -gt 0) {
+        Write-Warn 'Additional HOSTS names are user-supplied and are not independently classified or verified by this tool.'
     }
 
     Write-Host "`n-- Scheduled task --" -ForegroundColor Cyan
@@ -4841,10 +5150,12 @@ function Show-Status {
     Write-Host "`n-- Configuration --" -ForegroundColor Cyan
     foreach ($name in @(
         'rotationMode', 'timedIntervalMin', 'blockCDP', 'blockWpn', 'blockTelemetry',
-        'requestDiagnosticDataDelete', 'blockHosts', 'blockAADHost', 'blockDO',
-        'killPhoneLink', 'killOneDrive', 'killStore', 'killTimeline', 'hookMethod'
+        'requestDiagnosticDataDelete', 'blockHosts', 'blockDDSHosts',
+        'blockActivityHosts', 'blockWnsHosts', 'blockAADHost',
+        'additionalHostDomains', 'blockDO', 'killPhoneLink', 'killOneDrive',
+        'killStore', 'killTimeline', 'hookMethod'
     )) {
-        Write-Host ("  {0,-20} {1}" -f $name, $config[$name])
+        Write-Host ("  {0,-28} {1}" -f $name, (Format-ConfigValue -Name $name -Value $config[$name]))
     }
 
     Write-Host "`n-- Reversible state --" -ForegroundColor Cyan
@@ -4963,6 +5274,11 @@ function Show-Status {
     }
     if ([bool]$config['blockDO']) {
         Write-Info 'DODownloadMode=99 is an opt-in Delivery Optimization policy; it is not GDID rotation and can affect update delivery.'
+    }
+    if ($hostsMatch) {
+        Write-Ok 'The managed HOSTS block exactly matches the currently configured IPv4/IPv6 name set.'
+    } else {
+        Write-Warn 'The managed HOSTS block does not exactly match the currently configured name set; review the HOSTS status details above and run install as Administrator.'
     }
     Write-Warn 'HOSTS blocks are exact-name, best-effort resolver controls; they do not prove that all identity-reporting paths are blocked.'
     Write-Warn 'The tool cannot replace or verify removal of the authoritative server-issued identifier.'
@@ -5143,8 +5459,20 @@ function Install-All {
     }
 
     $domains = @(Get-ConfiguredHostDomains -Config $config)
-    if ([bool]$config['blockHosts']) {
+    if ([bool]$config['blockHosts'] -and $domains.Count -gt 0) {
+        if ([bool]$config['blockWnsHosts']) {
+            Write-Warn 'blockWnsHosts can break push notifications, MDM management notifications, mail synchronization, and settings synchronization.'
+        }
+        if ([bool]$config['blockAADHost']) {
+            Write-Warn 'blockAADHost can interfere with Microsoft-account or AAD-related functionality.'
+        }
+        if (@($config['additionalHostDomains']).Count -gt 0) {
+            Write-Warn 'additionalHostDomains contains user-supplied names. Review their collateral effects before continuing.'
+        }
         Install-HostsBlocks -Domains $domains
+    } elseif ([bool]$config['blockHosts']) {
+        Uninstall-HostsBlocks
+        Write-Warn 'blockHosts=true, but no HOSTS groups or additional names are enabled; the managed block was removed.'
     } else {
         Uninstall-HostsBlocks
         Write-Info 'HOSTS blocking is disabled.'
@@ -5356,10 +5684,12 @@ function Show-Config {
         Write-Host "`n-- GDID Configuration --" -ForegroundColor Cyan
         foreach ($name in @(
             'rotationMode', 'timedIntervalMin', 'blockCDP', 'blockWpn', 'blockTelemetry',
-            'requestDiagnosticDataDelete', 'blockHosts', 'blockAADHost', 'blockDO',
-            'killPhoneLink', 'killOneDrive', 'killStore', 'killTimeline', 'hookMethod'
+            'requestDiagnosticDataDelete', 'blockHosts', 'blockDDSHosts',
+            'blockActivityHosts', 'blockWnsHosts', 'blockAADHost',
+            'additionalHostDomains', 'blockDO', 'killPhoneLink', 'killOneDrive',
+            'killStore', 'killTimeline', 'hookMethod'
         )) {
-            Write-Host ("  {0,-20} {1}" -f $name, $config[$name])
+            Write-Host ("  {0,-28} {1}" -f $name, (Format-ConfigValue -Name $name -Value $config[$name]))
         }
         Write-Host "`nUse: .\$($script:ScriptLeaf) config <key> <value>"
         return
@@ -5373,19 +5703,19 @@ function Show-Config {
     }
 
     if (-not $ValueWasSupplied) {
-        Write-Host "$ConfigKey = $($config[$ConfigKey])"
+        Write-Host "$ConfigKey = $(Format-ConfigValue -Name $ConfigKey -Value $config[$ConfigKey])"
         return
     }
 
     $config[$ConfigKey] = Convert-ConfigValue -Name $ConfigKey -Text $ConfigValue
     Save-Config -Config $config
-    Write-Ok "$ConfigKey = $($config[$ConfigKey])"
+    Write-Ok "$ConfigKey = $(Format-ConfigValue -Name $ConfigKey -Value $config[$ConfigKey])"
     Write-Info "Run '.\$($script:ScriptLeaf) install' as Administrator to reconcile actual system state."
 }
 
 function Show-Help {
     Write-Host @"
-GDID Privacy Tool (audited telemetry build)
+GDID Privacy Tool (audited HOSTS/telemetry build)
 
 Commands:
   status       Inspect local identity copies, Windows/edition diagnostic-data
@@ -5416,8 +5746,13 @@ Configuration:
                      Clear-WindowsDiagnosticData -Force before stopping telemetry
                      services, records the result, and resets the flag only after
                      Windows accepts the request.
-  blockHosts         Block activity.windows.com by exact HOSTS name.
-  blockAADHost       Also block aad.cs.dds.microsoft.com (higher collateral).
+  blockHosts         Master switch for all exact-name HOSTS groups.
+  blockDDSHosts      Block five DDS/CDP names. Fresh installs default to true.
+  blockActivityHosts Block four Activity/Project Rome names. Default true.
+  blockWnsHosts      Block six WNS/notify names. High collateral; default false.
+  blockAADHost       Also block aad.cs.dds.microsoft.com. High collateral.
+  additionalHostDomains
+                     Comma-separated custom exact DNS names; empty clears them.
   blockDO            Set documented DODownloadMode=99; DoSvc is not disabled.
   killPhoneLink      Set EnableMmx=0.
   killOneDrive       Set DisableFileSyncNGSC=1.
@@ -5431,6 +5766,10 @@ Diagnostic-data minimums:
   The script reports both requested and actual values after gpupdate /force.
 
 Important:
+  WNS hostname blocking can break push notifications, MDM management, mail sync,
+  and settings sync. The AAD/DDS name can affect authentication-related paths.
+  HOSTS rules are exact-name and best effort; temporary NXDOMAIN status neither
+  removes a configured name nor proves that the endpoint list is complete.
   Clear-WindowsDiagnosticData submits a deletion request; it does not prove that
   server-side deletion has completed. Diagnostic policies and service disabling
   reduce known Windows diagnostic traffic but cannot prove that every Microsoft
