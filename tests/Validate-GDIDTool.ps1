@@ -426,7 +426,7 @@ Require-Match $readme ([ordered]@{
 }) 'README telemetry/validation disclosure'
 
 Require-Match $audit ([ordered]@{
-    'Issue 12 disposition' = 'Issue #12 disposition'
+    'Issue 12 disposition' = '(?m)^##[ \t]+(?:Issue #12|\[Issue #12\]\(https://github\.com/someguy0110/gdid-privacy/issues/12\))[ \t]+disposition[ \t]*$'
     'telemetry effectiveness matrix' = 'Effectiveness matrix'
     'live test limitation' = 'not Windows'
     'HOSTS 3.8 section' = 'Grouped HOSTS expansion in 3\.8\.0'
