@@ -40,3 +40,26 @@ jobs:
       - name: Parse, analyze, and smoke-test under both engines
         shell: powershell
         run: .\tests\Run-AllChecks.ps1 -RequirePowerShell7
+
+
+      - name: Validate GitHub-style source archive bytes
+        shell: powershell
+        run: |
+          $archivePath = Join-Path $env:RUNNER_TEMP 'gdid-source.zip'
+          $extractPath = Join-Path $env:RUNNER_TEMP 'gdid-source'
+
+          if (Test-Path -LiteralPath $extractPath) {
+              Remove-Item -LiteralPath $extractPath -Recurse -Force
+          }
+
+          git archive --format=zip --output="$archivePath" HEAD
+          if ($LASTEXITCODE -ne 0) {
+              throw "git archive failed with exit code $LASTEXITCODE."
+          }
+
+          Expand-Archive -LiteralPath $archivePath -DestinationPath $extractPath -Force
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass `
+              -File (Join-Path $extractPath 'tests\Validate-GDIDTool.ps1')
+          if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+          }
